@@ -22,7 +22,11 @@ from models.car import Car
 from models.circuit import Circuit
 from models.driver import Driver
 from models.team import Team
-from engine.race import RaceEntry, RaceResult, QualiResult, simulate_race, simulate_qualifying
+from engine.race import (
+    RaceEntry, RaceResult, QualiResult, RaceStrategy, TyreStint,
+    simulate_race, simulate_qualifying, suggest_strategies, ai_strategy,
+    race_laps, adjusted_tyre_life, TYRE_COMPOUNDS,
+)
 from engine.development import apply_development
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -62,6 +66,7 @@ def load_teams(drivers: Dict[str, Driver]) -> Dict[str, Team]:
             reliability=t["car"]["reliability"],
             tire_deg=t["car"]["tire_deg"],
             braking=t["car"]["braking"],
+            pit_crew=t["car"]["pit_crew"],
         )
         teams[t["id"]] = Team(
             id=t["id"], name=t["name"], short_name=t["short_name"],
@@ -219,6 +224,7 @@ def show_team_overview(team: Team, drivers: Dict[str, Driver]) -> None:
     c_table.add_row("Reliability", stat_bar(car.reliability))
     c_table.add_row("Tyre Degradation", stat_bar(car.tire_deg))
     c_table.add_row("Braking", stat_bar(car.braking))
+    c_table.add_row("Pit Crew", stat_bar(car.pit_crew))
     c_table.add_row("[bold]Overall[/bold]", f"[bold]{car.overall}[/bold]")
 
     console.print(d_table)
@@ -265,6 +271,7 @@ def show_race_results(
         show_lines=False,
     )
     table.add_column("Pos", width=4, justify="center")
+    table.add_column("±", width=5, justify="right")
     table.add_column("Driver", min_width=20)
     table.add_column("Team", min_width=18)
     table.add_column("Gap / Status", min_width=22)
@@ -278,19 +285,30 @@ def show_race_results(
         if r.dnf:
             pos_str = "[dim]—[/dim]"
             gap_str = f"[red]DNF — {r.dnf_reason}[/red]"
+            delta_str = ""
         elif r.position == 1:
             pos_str = "[bold yellow]1[/bold yellow]"
             gap_str = "[green]WINNER[/green]"
+            if r.grid_position > 0:
+                delta = r.grid_position - r.position
+                delta_str = f"[green]+{delta}[/green]" if delta > 0 else ("[dim]—[/dim]" if delta == 0 else f"[red]{delta}[/red]")
+            else:
+                delta_str = ""
         else:
             pos_str = str(r.position)
             gap_str = f"+{r.time_gap:.3f}s"
+            if r.grid_position > 0:
+                delta = r.grid_position - r.position
+                delta_str = f"[green]+{delta}[/green]" if delta > 0 else ("[dim]—[/dim]" if delta == 0 else f"[red]{delta}[/red]")
+            else:
+                delta_str = ""
 
         fl_str = "[bold yellow]FL[/bold yellow]" if r.fastest_lap else ""
         pts_str = f"[bold]{r.points}[/bold]" if r.points > 0 else ""
         name_str = f"{prefix}{r.driver.name}"
         team_str = f"[{r.team_color}]{r.team_name}[/{r.team_color}]"
 
-        table.add_row(pos_str, name_str, team_str, gap_str, pts_str, fl_str)
+        table.add_row(pos_str, delta_str, name_str, team_str, gap_str, pts_str, fl_str)
 
     console.print(table)
 
@@ -347,6 +365,7 @@ def upgrade_car_menu(team: Team) -> None:
         "4": ("reliability", "Reliability"),
         "5": ("tire_deg", "Tyre Degradation"),
         "6": ("braking", "Braking System"),
+        "7": ("pit_crew", "Pit Crew"),
     }
 
     while True:
@@ -374,7 +393,7 @@ def upgrade_car_menu(team: Team) -> None:
         table.add_row("0", "[dim]Back[/dim]", "", "", "")
         console.print(table)
 
-        choice = Prompt.ask("Choose", choices=["0", "1", "2", "3", "4", "5", "6"])
+        choice = Prompt.ask("Choose", choices=["0", "1", "2", "3", "4", "5", "6", "7"])
         if choice == "0":
             break
 
@@ -626,11 +645,135 @@ def show_driver_development(
     ))
 
 
+# ─── Strategy UI ──────────────────────────────────────────────────────────────
+
+def _fmt_stint(stint: TyreStint) -> str:
+    """Rich-formatted compound symbol with lap count, e.g. [red]S[/red](14)."""
+    info = TYRE_COMPOUNDS[stint.compound]
+    return f"[{info['color']}]{info['symbol']}[/{info['color']}]({stint.laps})"
+
+
+def _fmt_strategy(strategy: RaceStrategy) -> str:
+    return " → ".join(_fmt_stint(s) for s in strategy.stints)
+
+
+def _custom_strategy(weather: str, total_laps: int) -> RaceStrategy:
+    """Prompt the player to build a custom strategy."""
+    is_wet = weather == "wet"
+    valid_map = {"I": "intermediate", "W": "wet"} if is_wet else {"H": "hard", "M": "medium", "S": "soft"}
+    valid_keys = list(valid_map.keys())
+    compound_hint = "/".join(valid_keys)
+
+    while True:
+        stops_str = Prompt.ask("Number of pit stops", choices=["1", "2"])
+        num_stints = int(stops_str) + 1
+        base_laps = total_laps // num_stints
+
+        stints: List[TyreStint] = []
+        for i in range(num_stints):
+            key = Prompt.ask(f"Stint {i + 1} compound [{compound_hint}]", choices=valid_keys).upper()
+            laps = base_laps if i < num_stints - 1 else total_laps - base_laps * (num_stints - 1)
+            stints.append(TyreStint(compound=valid_map[key], laps=laps))
+
+        if not is_wet and len({s.compound for s in stints}) < 2:
+            console.print("[red]You must use at least 2 different compounds in dry conditions. Try again.[/red]")
+            continue
+
+        return RaceStrategy(stints=stints, label="Custom")
+
+
+def show_strategy_menu(
+    circuit: Circuit,
+    weather: str,
+    player_team: "Team",
+    drivers: Dict[str, "Driver"],
+) -> Dict[str, RaceStrategy]:
+    """
+    Display the tyre strategy selection screen and return a dict mapping each
+    player driver ID to their chosen RaceStrategy.
+    """
+    player_drivers = [drivers[did] for did in player_team.driver_ids if did in drivers]
+    ref_driver = player_drivers[0] if player_drivers else None
+    car = player_team.car
+    total = race_laps(circuit)
+    is_wet = weather == "wet"
+
+    presets = suggest_strategies(circuit, weather, car, ref_driver) if ref_driver else []
+    recommended_idx = 0 if is_wet else 1   # Intermediate Only / Balanced
+
+    # ── Build panel content ──────────────────────────────────────────
+    lines: List[str] = []
+    weather_tag = "[blue]RAIN[/blue]" if is_wet else "[yellow]DRY[/yellow]"
+    lines.append(f"[bold]TYRE STRATEGY[/bold] — {circuit.name}")
+    lines.append(
+        f"Weather: {weather_tag}  |  Tyre Wear: [bold]{circuit.tire_wear.upper()}[/bold]"
+        f"  |  Race Distance: [bold]{total} laps[/bold]"
+    )
+    lines.append("")
+
+    if ref_driver:
+        lines.append("Compound life (adjusted for your car):")
+        if is_wet:
+            inter_life = adjusted_tyre_life("intermediate", circuit, car, ref_driver)
+            wet_life   = adjusted_tyre_life("wet",          circuit, car, ref_driver)
+            lines.append(f"  [green]I[/green] Intermediate — ~{inter_life} laps")
+            lines.append(f"  [blue]W[/blue] Wet          — ~{wet_life} laps")
+        else:
+            hard_life = adjusted_tyre_life("hard",   circuit, car, ref_driver)
+            med_life  = adjusted_tyre_life("medium", circuit, car, ref_driver)
+            soft_life = adjusted_tyre_life("soft",   circuit, car, ref_driver)
+            lines.append(f"  [white]H[/white] Hard   — ~{hard_life} laps")
+            lines.append(f"  [yellow]M[/yellow] Medium — ~{med_life} laps")
+            lines.append(f"  [red]S[/red] Soft   — ~{soft_life} laps")
+        lines.append("")
+
+    lines.append("Preset strategies:")
+    for i, preset in enumerate(presets):
+        rec = "  [bold cyan]← rec.[/bold cyan]" if i == recommended_idx else ""
+        lines.append(f"  [[bold]{i + 1}[/bold]] {preset.label:<16} {_fmt_strategy(preset)}{rec}")
+
+    custom_num = len(presets) + 1
+    lines.append(f"  [[bold]{custom_num}[/bold]] Custom — choose compounds manually")
+
+    console.print()
+    console.print(Panel("\n".join(lines), border_style="cyan", padding=(0, 2)))
+
+    valid_choices = [str(i + 1) for i in range(len(presets))] + [str(custom_num)]
+    choice = Prompt.ask("Strategy", choices=valid_choices)
+    choice_idx = int(choice) - 1
+
+    if choice_idx < len(presets):
+        chosen = presets[choice_idx]
+    else:
+        chosen = _custom_strategy(weather, total)
+
+    return {d.id: chosen for d in player_drivers}
+
+
+def show_strategy_summary(
+    player_team: "Team",
+    drivers: Dict[str, "Driver"],
+    strategies: Dict[str, RaceStrategy],
+) -> None:
+    """Show the player's chosen strategy for each of their drivers."""
+    lines: List[str] = []
+    for did in player_team.driver_ids:
+        d = drivers.get(did)
+        if d and d.id in strategies:
+            strategy = strategies[d.id]
+            lines.append(f"  {d.name}: {_fmt_strategy(strategy)} — [italic]{strategy.label}[/italic]")
+    if lines:
+        console.print(Panel("\n".join(lines), title="[bold]YOUR STRATEGY[/bold]", border_style="cyan", padding=(0, 1)))
+
+
 # ─── Race Simulation ──────────────────────────────────────────────────────────
 
 def run_race_with_animation(
-    entries: List[RaceEntry], circuit: Circuit, weather: str,
+    entries: List[RaceEntry],
+    circuit: Circuit,
+    weather: str,
     grid: Optional[List[str]] = None,
+    strategies: Optional[Dict[str, RaceStrategy]] = None,
 ) -> List[RaceResult]:
     results: Optional[List[RaceResult]] = None
 
@@ -647,9 +790,66 @@ def run_race_with_animation(
         for _ in range(20):
             time.sleep(0.08)
             progress.advance(task, 1)
-        results = simulate_race(entries, circuit, weather, grid=grid)
+        results = simulate_race(entries, circuit, weather, grid=grid, strategies=strategies)
 
     return results
+
+
+# ─── Finances ─────────────────────────────────────────────────────────────────
+
+POSITION_PRIZE = {1: 5.5, 2: 5.0, 3: 4.5, 4: 4.0, 5: 3.5,
+                  6: 3.0, 7: 2.5, 8: 2.0, 9: 1.5, 10: 1.0}
+
+
+def _apply_race_finances(
+    team: Team,
+    results: List[RaceResult],
+    player_team_id: str,
+) -> None:
+    """Compute and apply race income, ops cost, and DNF repairs. Print a summary panel."""
+    player_results = [r for r in results if r.team_id == player_team_id]
+    num_dnfs = sum(1 for r in player_results if r.dnf)
+
+    base_income     = 5.0
+    ops_cost        = -3.0
+    dnf_repairs     = -6.0 * num_dnfs
+    constructor_win = 4.0 if any(r.position == 1 and not r.dnf for r in player_results) else 0.0
+
+    prize_lines = []
+    total_prize = 0.0
+    for r in player_results:
+        prize = POSITION_PRIZE.get(r.position, 0.0) if not r.dnf else 0.0
+        total_prize += prize
+        status = "DNF" if r.dnf else f"P{r.position}"
+        color = "green" if prize > 0 else "dim"
+        prize_lines.append(
+            f"  {r.driver.name} ({status})  [{color}]+€{prize:.1f}M[/{color}]"
+        )
+
+    net = round(base_income + total_prize + constructor_win + ops_cost + dnf_repairs, 1)
+    team.budget = max(0.0, team.budget + net)
+
+    lines = [f"  Base income      [green]+€{base_income:.1f}M[/green]"]
+    lines += prize_lines
+    if constructor_win:
+        lines.append(f"  Constructor win  [bold green]+€{constructor_win:.1f}M[/bold green]")
+    lines.append(f"  Running costs    [red]−€{abs(ops_cost):.1f}M[/red]")
+    if num_dnfs:
+        lines.append(
+            f"  DNF repairs      [red]−€{abs(dnf_repairs):.1f}M[/red]"
+            f"  ({num_dnfs} DNF{'s' if num_dnfs > 1 else ''})"
+        )
+    net_color = "green" if net >= 0 else "red"
+    sign = "+" if net >= 0 else ""
+    lines.append(f"\n  Net this race    [{net_color}]{sign}€{net:.1f}M[/{net_color}]")
+    lines.append(f"  Budget now       [bold]€{team.budget:.1f}M[/bold]")
+
+    console.print(Panel(
+        "\n".join(lines),
+        title="[bold]FINANCES[/bold]",
+        border_style="yellow",
+        padding=(0, 2),
+    ))
 
 
 # ─── Main Game Loop ───────────────────────────────────────────────────────────
@@ -703,13 +903,24 @@ def main() -> None:
         quali_results = run_qualifying_with_animation(entries, circuit, quali_weather)
         show_quali_results(quali_results, player_team_id, circuit)
         grid = [qr.driver.id for qr in quali_results]
-        console.input("\n[dim]Press Enter to start the race…[/dim]")
+        console.input("\n[dim]Press Enter for strategy selection…[/dim]")
 
         # ── Race ────────────────────────────────────────────────────
         weather = "wet" if random.random() * 100 < circuit.weather_chance else "dry"
         show_race_header(circuit, race_num, total_races, weather)
-        results = run_race_with_animation(entries, circuit, weather, grid=grid)
+
+        # Strategy selection — player picks, AI fills the rest
+        player_strategies = show_strategy_menu(circuit, weather, player_team, drivers)
+        show_strategy_summary(player_team, drivers, player_strategies)
+        strategies: Dict[str, RaceStrategy] = dict(player_strategies)
+        for entry in entries:
+            if entry.driver.id not in strategies:
+                strategies[entry.driver.id] = ai_strategy(entry, circuit, weather)
+
+        console.input("\n[dim]Press Enter to start the race…[/dim]")
+        results = run_race_with_animation(entries, circuit, weather, grid=grid, strategies=strategies)
         show_race_results(results, player_team_id, circuit)
+        _apply_race_finances(player_team, results, player_team_id)
 
         # Driver development
         gains = apply_development(results, drivers, grid=grid)
@@ -719,9 +930,6 @@ def main() -> None:
         for r in results:
             driver_pts[r.driver.id] = driver_pts.get(r.driver.id, 0) + r.points
             team_pts[r.team_id] = team_pts.get(r.team_id, 0) + r.points
-
-        # Operational cost per race
-        player_team.budget = max(0.0, player_team.budget - 3.0)
 
         show_standings(driver_pts, team_pts, drivers, teams, player_team_id)
 

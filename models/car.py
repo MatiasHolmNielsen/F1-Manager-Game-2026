@@ -9,6 +9,7 @@ UPGRADE_COSTS: dict = {
     "reliability": 8,
     "tire_deg": 10,
     "braking": 9,
+    "pit_crew": 7,
 }
 
 
@@ -21,12 +22,13 @@ class Car:
     reliability: int     # 0-100: DNF resistance
     tire_deg: int        # 0-100: how gentle the car is on tyres (higher = less deg)
     braking: int         # 0-100: brake performance — matters at heavy-braking circuits
+    pit_crew: int        # 60-90: pit stop execution speed and precision
 
     @property
     def overall(self) -> int:
         return int(
             (self.engine + self.aerodynamics + self.mechanical_grip
-             + self.reliability + self.tire_deg + self.braking) / 6
+             + self.reliability + self.tire_deg + self.braking + self.pit_crew) / 7
         )
 
     def upgrade(self, attribute: str) -> None:
