@@ -22,7 +22,8 @@ from models.car import Car
 from models.circuit import Circuit
 from models.driver import Driver
 from models.team import Team
-from engine.race import RaceEntry, RaceResult, simulate_race
+from engine.race import RaceEntry, RaceResult, QualiResult, simulate_race, simulate_qualifying
+from engine.development import apply_development
 
 DATA_DIR = Path(__file__).parent / "data"
 console = Console()
@@ -36,9 +37,12 @@ def load_drivers() -> Dict[str, Driver]:
     return {
         d["id"]: Driver(
             id=d["id"], name=d["name"], nationality=d["nationality"],
-            age=d["age"], speed=d["speed"], consistency=d["consistency"],
-            overtaking=d["overtaking"], wet_weather=d["wet_weather"],
-            experience=d["experience"], salary=d["salary"],
+            age=d["age"],
+            pace=d["pace"], qualifying_pace=d["qualifying_pace"],
+            consistency=d["consistency"], racecraft=d["racecraft"],
+            wet_weather=d["wet_weather"], tire_management=d["tire_management"],
+            mental=d["mental"], experience=d["experience"],
+            potential=d["potential"], salary=d["salary"],
             team_id=d.get("team_id"),
         )
         for d in data["drivers"]
@@ -54,8 +58,10 @@ def load_teams(drivers: Dict[str, Driver]) -> Dict[str, Team]:
             team_id=t["id"],
             engine=t["car"]["engine"],
             aerodynamics=t["car"]["aerodynamics"],
+            mechanical_grip=t["car"]["mechanical_grip"],
             reliability=t["car"]["reliability"],
-            tire_management=t["car"]["tire_management"],
+            tire_deg=t["car"]["tire_deg"],
+            braking=t["car"]["braking"],
         )
         teams[t["id"]] = Team(
             id=t["id"], name=t["name"], short_name=t["short_name"],
@@ -163,37 +169,61 @@ def show_team_overview(team: Team, drivers: Dict[str, Driver]) -> None:
         )
     )
 
-    d_table = Table(title="Drivers", box=box.SIMPLE_HEAD, show_edge=False)
+    # Driver table — performance stats
+    d_table = Table(title="Drivers — Performance", box=box.SIMPLE_HEAD, show_edge=False)
     d_table.add_column("Name", min_width=18)
     d_table.add_column("OVR", justify="center", width=5)
-    d_table.add_column("Speed", min_width=16)
+    d_table.add_column("Pace", min_width=16)
+    d_table.add_column("Q.Pace", min_width=16)
     d_table.add_column("Consistency", min_width=16)
-    d_table.add_column("Overtaking", min_width=16)
-    d_table.add_column("Wet", min_width=16)
-    d_table.add_column("Experience", min_width=16)
-    d_table.add_column("Salary", justify="right", width=8)
+    d_table.add_column("Racecraft", min_width=16)
+
+    # Driver table — conditions & profile
+    d_table2 = Table(title="Drivers — Conditions & Profile", box=box.SIMPLE_HEAD, show_edge=False)
+    d_table2.add_column("Name", min_width=18)
+    d_table2.add_column("Wet", min_width=16)
+    d_table2.add_column("Tire Mgmt", min_width=16)
+    d_table2.add_column("Mental", min_width=16)
+    d_table2.add_column("Experience", min_width=16)
+    d_table2.add_column("Age / Potential", min_width=20)
+    d_table2.add_column("Salary", justify="right", width=8)
 
     for did in team.driver_ids:
         d = drivers.get(did)
         if d:
+            age_colors = {"prospect": "green", "prime": "cyan", "veteran": "yellow", "legend": "red"}
+            age_color = age_colors[d.age_group]
+            age_str = (
+                f"[{age_color}]{d.age} ({d.age_group})[/{age_color}]  "
+                f"[dim]POT [/dim][bold]{d.potential}[/bold]"
+            )
             d_table.add_row(
                 d.name, str(d.overall),
-                stat_bar(d.speed), stat_bar(d.consistency),
-                stat_bar(d.overtaking), stat_bar(d.wet_weather),
-                stat_bar(d.experience), f"€{d.salary}M",
+                stat_bar(d.pace), stat_bar(d.qualifying_pace),
+                stat_bar(d.consistency), stat_bar(d.racecraft),
+            )
+            d_table2.add_row(
+                d.name,
+                stat_bar(d.wet_weather), stat_bar(d.tire_management),
+                stat_bar(d.mental), stat_bar(d.experience),
+                age_str, f"€{d.salary}M",
             )
 
     car = team.car
     c_table = Table(title="Car", box=box.SIMPLE_HEAD, show_edge=False)
-    c_table.add_column("Attribute", min_width=16)
+    c_table.add_column("Attribute", min_width=18)
     c_table.add_column("Rating", min_width=18)
     c_table.add_row("Engine", stat_bar(car.engine))
     c_table.add_row("Aerodynamics", stat_bar(car.aerodynamics))
+    c_table.add_row("Mechanical Grip", stat_bar(car.mechanical_grip))
     c_table.add_row("Reliability", stat_bar(car.reliability))
-    c_table.add_row("Tire Management", stat_bar(car.tire_management))
+    c_table.add_row("Tyre Degradation", stat_bar(car.tire_deg))
+    c_table.add_row("Braking", stat_bar(car.braking))
     c_table.add_row("[bold]Overall[/bold]", f"[bold]{car.overall}[/bold]")
 
     console.print(d_table)
+    console.print()
+    console.print(d_table2)
     console.print()
     console.print(c_table)
 
@@ -313,8 +343,10 @@ def upgrade_car_menu(team: Team) -> None:
     attr_map = {
         "1": ("engine", "Engine Power"),
         "2": ("aerodynamics", "Aerodynamics"),
-        "3": ("reliability", "Reliability"),
-        "4": ("tire_management", "Tire Management"),
+        "3": ("mechanical_grip", "Mechanical Grip"),
+        "4": ("reliability", "Reliability"),
+        "5": ("tire_deg", "Tyre Degradation"),
+        "6": ("braking", "Braking System"),
     }
 
     while True:
@@ -325,7 +357,7 @@ def upgrade_car_menu(team: Team) -> None:
             box=box.SIMPLE_HEAD, show_edge=False,
         )
         table.add_column("#", width=3)
-        table.add_column("Attribute", min_width=16)
+        table.add_column("Attribute", min_width=18)
         table.add_column("Current", justify="center", width=8)
         table.add_column("After", justify="center", width=6)
         table.add_column("Cost", justify="right", width=8)
@@ -342,7 +374,7 @@ def upgrade_car_menu(team: Team) -> None:
         table.add_row("0", "[dim]Back[/dim]", "", "", "")
         console.print(table)
 
-        choice = Prompt.ask("Choose", choices=["0", "1", "2", "3", "4"])
+        choice = Prompt.ask("Choose", choices=["0", "1", "2", "3", "4", "5", "6"])
         if choice == "0":
             break
 
@@ -383,11 +415,16 @@ def driver_market_menu(
         fa_table.add_column("#", width=3)
         fa_table.add_column("Name", min_width=18)
         fa_table.add_column("OVR", justify="center", width=5)
-        fa_table.add_column("Spd", justify="center", width=5)
+        fa_table.add_column("Pace", justify="center", width=5)
+        fa_table.add_column("QPce", justify="center", width=5)
         fa_table.add_column("Con", justify="center", width=5)
-        fa_table.add_column("Ovt", justify="center", width=5)
+        fa_table.add_column("Rcft", justify="center", width=5)
         fa_table.add_column("Wet", justify="center", width=5)
+        fa_table.add_column("Tire", justify="center", width=5)
+        fa_table.add_column("Men", justify="center", width=5)
         fa_table.add_column("Exp", justify="center", width=5)
+        fa_table.add_column("Age", justify="center", width=5)
+        fa_table.add_column("POT", justify="center", width=5)
         fa_table.add_column("Hire Cost", justify="right", width=10)
 
         for i, d in enumerate(free_agents, 1):
@@ -395,8 +432,11 @@ def driver_market_menu(
             color = "green" if team.budget >= hire_cost else "red"
             fa_table.add_row(
                 str(i), d.name, str(d.overall),
-                str(d.speed), str(d.consistency), str(d.overtaking),
-                str(d.wet_weather), str(d.experience),
+                str(d.pace), str(d.qualifying_pace),
+                str(d.consistency), str(d.racecraft),
+                str(d.wet_weather), str(d.tire_management),
+                str(d.mental), str(d.experience),
+                str(d.age), str(d.potential),
                 f"[{color}]€{hire_cost}M[/{color}]",
             )
 
@@ -494,10 +534,103 @@ def management_menu(
             break
 
 
+# ─── Qualifying ───────────────────────────────────────────────────────────────
+
+def run_qualifying_with_animation(
+    entries: List[RaceEntry], circuit: Circuit, weather: str
+) -> List[QualiResult]:
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            f"[cyan]Qualifying — {circuit.name}...[/cyan]", total=15
+        )
+        for _ in range(15):
+            time.sleep(0.06)
+            progress.advance(task, 1)
+        return simulate_qualifying(entries, circuit, weather)
+
+
+def show_quali_results(
+    results: List[QualiResult], player_team_id: str, circuit: Circuit
+) -> None:
+    console.print()
+    table = Table(
+        title=f"QUALIFYING — {circuit.name}",
+        box=box.ROUNDED,
+        header_style="bold white",
+        show_lines=False,
+    )
+    table.add_column("Pos", width=5, justify="center")
+    table.add_column("Driver", min_width=20)
+    table.add_column("Team", min_width=18)
+    table.add_column("Gap", min_width=12, justify="right")
+
+    for r in results:
+        is_player = r.team_id == player_team_id
+        prefix = "[bold]▶ [/bold]" if is_player else "  "
+        name_str = f"{prefix}{r.driver.name}"
+        team_str = f"[{r.team_color}]{r.team_name}[/{r.team_color}]"
+
+        if r.position == 1:
+            pos_str = "[bold yellow]P1[/bold yellow]"
+            gap_str = "[bold cyan]POLE POSITION[/bold cyan]"
+        elif r.position <= 3:
+            pos_str = f"[bold green]P{r.position}[/bold green]"
+            gap_str = f"+{r.lap_time_delta:.3f}s"
+        elif r.position >= 11:
+            pos_str = f"[dim]P{r.position}[/dim]"
+            gap_str = f"[dim]+{r.lap_time_delta:.3f}s[/dim]"
+        else:
+            pos_str = f"P{r.position}"
+            gap_str = f"+{r.lap_time_delta:.3f}s"
+
+        table.add_row(pos_str, name_str, team_str, gap_str)
+
+    console.print(table)
+
+
+def show_driver_development(
+    team: Team,
+    drivers: Dict[str, Driver],
+    gains: Dict[str, Dict[str, int]],
+) -> None:
+    panels = []
+    for did in team.driver_ids:
+        driver = drivers.get(did)
+        if not driver:
+            continue
+        driver_gains = gains.get(did, {})
+        lines: List[str] = []
+        for stat, delta in driver_gains.items():
+            old_val = getattr(driver, stat) - delta
+            new_val = getattr(driver, stat)
+            stat_label = stat.replace("_", " ").title()
+            if delta > 0:
+                lines.append(f"[green]+{delta}[/green] {stat_label} ({old_val} → {new_val})")
+            else:
+                lines.append(f"[red]{delta}[/red] {stat_label} ({old_val} → {new_val})")
+        content = "\n".join(lines) if lines else "[dim]No development this race.[/dim]"
+        panels.append(Panel(content, title=f"[bold]{driver.name}[/bold]", padding=(0, 1)))
+
+    console.print()
+    console.print(Panel(
+        Columns(panels) if panels else "[dim]—[/dim]",
+        title="[bold]DRIVER DEVELOPMENT[/bold]",
+        border_style="cyan",
+        padding=(0, 1),
+    ))
+
+
 # ─── Race Simulation ──────────────────────────────────────────────────────────
 
 def run_race_with_animation(
-    entries: List[RaceEntry], circuit: Circuit, weather: str
+    entries: List[RaceEntry], circuit: Circuit, weather: str,
+    grid: Optional[List[str]] = None,
 ) -> List[RaceResult]:
     results: Optional[List[RaceResult]] = None
 
@@ -514,7 +647,7 @@ def run_race_with_animation(
         for _ in range(20):
             time.sleep(0.08)
             progress.advance(task, 1)
-        results = simulate_race(entries, circuit, weather)
+        results = simulate_race(entries, circuit, weather, grid=grid)
 
     return results
 
@@ -550,12 +683,7 @@ def main() -> None:
             driver_pts, team_pts,
         )
 
-        # Determine weather
-        weather = "wet" if random.random() * 100 < circuit.weather_chance else "dry"
-
-        show_race_header(circuit, race_num, total_races, weather)
-
-        # Build all entries
+        # Build all entries (before qualifying)
         entries: List[RaceEntry] = []
         for team in teams.values():
             for did in team.driver_ids:
@@ -566,11 +694,26 @@ def main() -> None:
                         team_id=team.id, team_name=team.short_name,
                         team_color=team.color,
                     ))
-
         random.shuffle(entries)
-        results = run_race_with_animation(entries, circuit, weather)
 
+        # ── Qualifying ──────────────────────────────────────────────
+        quali_weather = "wet" if random.random() * 100 < circuit.weather_chance * 0.5 else "dry"
+        show_race_header(circuit, race_num, total_races, quali_weather)
+        console.print(Panel("[bold cyan]QUALIFYING SESSION[/bold cyan]", border_style="cyan", padding=(0, 2)))
+        quali_results = run_qualifying_with_animation(entries, circuit, quali_weather)
+        show_quali_results(quali_results, player_team_id, circuit)
+        grid = [qr.driver.id for qr in quali_results]
+        console.input("\n[dim]Press Enter to start the race…[/dim]")
+
+        # ── Race ────────────────────────────────────────────────────
+        weather = "wet" if random.random() * 100 < circuit.weather_chance else "dry"
+        show_race_header(circuit, race_num, total_races, weather)
+        results = run_race_with_animation(entries, circuit, weather, grid=grid)
         show_race_results(results, player_team_id, circuit)
+
+        # Driver development
+        gains = apply_development(results, drivers, grid=grid)
+        show_driver_development(player_team, drivers, gains)
 
         # Update standings
         for r in results:
