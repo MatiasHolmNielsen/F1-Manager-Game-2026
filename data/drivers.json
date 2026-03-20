@@ -2,128 +2,153 @@
   "drivers": [
     {
       "id": "VER", "name": "Max Verstappen", "nationality": "Dutch", "age": 28,
-      "speed": 97, "consistency": 94, "overtaking": 95, "wet_weather": 90, "experience": 92,
-      "salary": 55, "team_id": "red_bull"
+      "pace": 96, "qualifying_pace": 99, "consistency": 95, "racecraft": 95,
+      "wet_weather": 90, "tire_management": 88, "mental": 97, "experience": 92,
+      "potential": 99, "salary": 55, "team_id": "red_bull"
     },
     {
       "id": "LAW", "name": "Liam Lawson", "nationality": "New Zealander", "age": 23,
-      "speed": 78, "consistency": 74, "overtaking": 76, "wet_weather": 72, "experience": 55,
-      "salary": 3, "team_id": "red_bull"
+      "pace": 78, "qualifying_pace": 77, "consistency": 73, "racecraft": 75,
+      "wet_weather": 72, "tire_management": 73, "mental": 71, "experience": 52,
+      "potential": 89, "salary": 3, "team_id": "red_bull"
     },
     {
       "id": "LEC", "name": "Charles Leclerc", "nationality": "Monegasque", "age": 28,
-      "speed": 93, "consistency": 84, "overtaking": 88, "wet_weather": 85, "experience": 82,
-      "salary": 35, "team_id": "ferrari"
+      "pace": 95, "qualifying_pace": 97, "consistency": 82, "racecraft": 84,
+      "wet_weather": 84, "tire_management": 76, "mental": 84, "experience": 82,
+      "potential": 95, "salary": 35, "team_id": "ferrari"
     },
     {
       "id": "HAM", "name": "Lewis Hamilton", "nationality": "British", "age": 41,
-      "speed": 91, "consistency": 88, "overtaking": 86, "wet_weather": 92, "experience": 99,
-      "salary": 45, "team_id": "ferrari"
+      "pace": 88, "qualifying_pace": 86, "consistency": 90, "racecraft": 92,
+      "wet_weather": 95, "tire_management": 96, "mental": 94, "experience": 99,
+      "potential": 92, "salary": 45, "team_id": "ferrari"
     },
     {
       "id": "RUS", "name": "George Russell", "nationality": "British", "age": 27,
-      "speed": 88, "consistency": 85, "overtaking": 83, "wet_weather": 82, "experience": 78,
-      "salary": 20, "team_id": "mercedes"
+      "pace": 88, "qualifying_pace": 89, "consistency": 85, "racecraft": 83,
+      "wet_weather": 82, "tire_management": 83, "mental": 82, "experience": 78,
+      "potential": 93, "salary": 20, "team_id": "mercedes"
     },
     {
       "id": "ANT", "name": "Kimi Antonelli", "nationality": "Italian", "age": 19,
-      "speed": 82, "consistency": 76, "overtaking": 80, "wet_weather": 75, "experience": 42,
-      "salary": 6, "team_id": "mercedes"
+      "pace": 82, "qualifying_pace": 81, "consistency": 74, "racecraft": 76,
+      "wet_weather": 74, "tire_management": 74, "mental": 70, "experience": 40,
+      "potential": 96, "salary": 6, "team_id": "mercedes"
     },
     {
       "id": "NOR", "name": "Lando Norris", "nationality": "British", "age": 26,
-      "speed": 92, "consistency": 88, "overtaking": 90, "wet_weather": 85, "experience": 80,
-      "salary": 28, "team_id": "mclaren"
+      "pace": 92, "qualifying_pace": 92, "consistency": 88, "racecraft": 90,
+      "wet_weather": 85, "tire_management": 84, "mental": 86, "experience": 80,
+      "potential": 97, "salary": 28, "team_id": "mclaren"
     },
     {
       "id": "PIA", "name": "Oscar Piastri", "nationality": "Australian", "age": 25,
-      "speed": 88, "consistency": 86, "overtaking": 85, "wet_weather": 82, "experience": 72,
-      "salary": 14, "team_id": "mclaren"
+      "pace": 88, "qualifying_pace": 87, "consistency": 87, "racecraft": 85,
+      "wet_weather": 82, "tire_management": 87, "mental": 84, "experience": 72,
+      "potential": 96, "salary": 14, "team_id": "mclaren"
     },
     {
       "id": "ALO", "name": "Fernando Alonso", "nationality": "Spanish", "age": 44,
-      "speed": 89, "consistency": 91, "overtaking": 88, "wet_weather": 88, "experience": 99,
-      "salary": 20, "team_id": "aston_martin"
+      "pace": 86, "qualifying_pace": 84, "consistency": 93, "racecraft": 96,
+      "wet_weather": 90, "tire_management": 95, "mental": 97, "experience": 99,
+      "potential": 90, "salary": 20, "team_id": "aston_martin"
     },
     {
       "id": "STR", "name": "Lance Stroll", "nationality": "Canadian", "age": 27,
-      "speed": 72, "consistency": 68, "overtaking": 65, "wet_weather": 70, "experience": 65,
-      "salary": 8, "team_id": "aston_martin"
+      "pace": 72, "qualifying_pace": 71, "consistency": 68, "racecraft": 65,
+      "wet_weather": 72, "tire_management": 70, "mental": 62, "experience": 65,
+      "potential": 76, "salary": 8, "team_id": "aston_martin"
     },
     {
       "id": "GAS", "name": "Pierre Gasly", "nationality": "French", "age": 30,
-      "speed": 80, "consistency": 78, "overtaking": 79, "wet_weather": 78, "experience": 72,
-      "salary": 9, "team_id": "alpine"
+      "pace": 80, "qualifying_pace": 80, "consistency": 78, "racecraft": 80,
+      "wet_weather": 78, "tire_management": 78, "mental": 76, "experience": 73,
+      "potential": 84, "salary": 9, "team_id": "alpine"
     },
     {
       "id": "DOO", "name": "Jack Doohan", "nationality": "Australian", "age": 22,
-      "speed": 74, "consistency": 70, "overtaking": 72, "wet_weather": 68, "experience": 38,
-      "salary": 2, "team_id": "alpine"
+      "pace": 74, "qualifying_pace": 74, "consistency": 70, "racecraft": 71,
+      "wet_weather": 68, "tire_management": 70, "mental": 68, "experience": 36,
+      "potential": 88, "salary": 2, "team_id": "alpine"
     },
     {
       "id": "SAI", "name": "Carlos Sainz", "nationality": "Spanish", "age": 31,
-      "speed": 87, "consistency": 85, "overtaking": 84, "wet_weather": 82, "experience": 80,
-      "salary": 18, "team_id": "williams"
+      "pace": 87, "qualifying_pace": 87, "consistency": 86, "racecraft": 85,
+      "wet_weather": 82, "tire_management": 89, "mental": 84, "experience": 80,
+      "potential": 90, "salary": 18, "team_id": "williams"
     },
     {
       "id": "ALB", "name": "Alex Albon", "nationality": "Thai", "age": 28,
-      "speed": 78, "consistency": 76, "overtaking": 77, "wet_weather": 74, "experience": 70,
-      "salary": 5, "team_id": "williams"
+      "pace": 78, "qualifying_pace": 77, "consistency": 76, "racecraft": 78,
+      "wet_weather": 74, "tire_management": 79, "mental": 74, "experience": 71,
+      "potential": 84, "salary": 5, "team_id": "williams"
     },
     {
       "id": "BEA", "name": "Oliver Bearman", "nationality": "British", "age": 20,
-      "speed": 76, "consistency": 72, "overtaking": 74, "wet_weather": 70, "experience": 40,
-      "salary": 2, "team_id": "haas"
+      "pace": 76, "qualifying_pace": 76, "consistency": 72, "racecraft": 72,
+      "wet_weather": 70, "tire_management": 72, "mental": 70, "experience": 38,
+      "potential": 90, "salary": 2, "team_id": "haas"
     },
     {
       "id": "OCO", "name": "Esteban Ocon", "nationality": "French", "age": 29,
-      "speed": 79, "consistency": 76, "overtaking": 75, "wet_weather": 78, "experience": 72,
-      "salary": 9, "team_id": "haas"
+      "pace": 79, "qualifying_pace": 78, "consistency": 76, "racecraft": 76,
+      "wet_weather": 78, "tire_management": 76, "mental": 74, "experience": 74,
+      "potential": 83, "salary": 9, "team_id": "haas"
     },
     {
       "id": "HUL", "name": "Nico Hulkenberg", "nationality": "German", "age": 38,
-      "speed": 80, "consistency": 79, "overtaking": 76, "wet_weather": 76, "experience": 82,
-      "salary": 12, "team_id": "audi"
+      "pace": 80, "qualifying_pace": 80, "consistency": 80, "racecraft": 78,
+      "wet_weather": 76, "tire_management": 79, "mental": 78, "experience": 84,
+      "potential": 83, "salary": 12, "team_id": "audi"
     },
     {
       "id": "BOR", "name": "Gabriel Bortoleto", "nationality": "Brazilian", "age": 21,
-      "speed": 75, "consistency": 71, "overtaking": 73, "wet_weather": 69, "experience": 38,
-      "salary": 2, "team_id": "audi"
+      "pace": 75, "qualifying_pace": 75, "consistency": 71, "racecraft": 72,
+      "wet_weather": 69, "tire_management": 72, "mental": 70, "experience": 36,
+      "potential": 92, "salary": 2, "team_id": "audi"
     },
     {
       "id": "TSU", "name": "Yuki Tsunoda", "nationality": "Japanese", "age": 26,
-      "speed": 81, "consistency": 76, "overtaking": 82, "wet_weather": 78, "experience": 65,
-      "salary": 7, "team_id": "racing_bulls"
+      "pace": 81, "qualifying_pace": 80, "consistency": 74, "racecraft": 84,
+      "wet_weather": 78, "tire_management": 73, "mental": 72, "experience": 65,
+      "potential": 88, "salary": 7, "team_id": "racing_bulls"
     },
     {
       "id": "HAD", "name": "Isack Hadjar", "nationality": "French", "age": 21,
-      "speed": 76, "consistency": 72, "overtaking": 74, "wet_weather": 70, "experience": 35,
-      "salary": 2, "team_id": "racing_bulls"
+      "pace": 76, "qualifying_pace": 76, "consistency": 72, "racecraft": 73,
+      "wet_weather": 70, "tire_management": 72, "mental": 70, "experience": 33,
+      "potential": 91, "salary": 2, "team_id": "racing_bulls"
     },
     {
       "id": "PER", "name": "Sergio Perez", "nationality": "Mexican", "age": 36,
-      "speed": 78, "consistency": 76, "overtaking": 73, "wet_weather": 72, "experience": 88,
-      "salary": 18, "team_id": null
+      "pace": 78, "qualifying_pace": 77, "consistency": 76, "racecraft": 74,
+      "wet_weather": 72, "tire_management": 88, "mental": 74, "experience": 90,
+      "potential": 82, "salary": 18, "team_id": null
     },
     {
       "id": "BOT", "name": "Valtteri Bottas", "nationality": "Finnish", "age": 36,
-      "speed": 75, "consistency": 74, "overtaking": 70, "wet_weather": 78, "experience": 84,
-      "salary": 5, "team_id": null
+      "pace": 75, "qualifying_pace": 74, "consistency": 75, "racecraft": 70,
+      "wet_weather": 79, "tire_management": 78, "mental": 70, "experience": 85,
+      "potential": 80, "salary": 5, "team_id": null
     },
     {
       "id": "MAG", "name": "Kevin Magnussen", "nationality": "Danish", "age": 33,
-      "speed": 72, "consistency": 70, "overtaking": 71, "wet_weather": 74, "experience": 74,
-      "salary": 4, "team_id": null
+      "pace": 72, "qualifying_pace": 72, "consistency": 70, "racecraft": 74,
+      "wet_weather": 74, "tire_management": 71, "mental": 74, "experience": 76,
+      "potential": 76, "salary": 4, "team_id": null
     },
     {
       "id": "ZHO", "name": "Zhou Guanyu", "nationality": "Chinese", "age": 26,
-      "speed": 70, "consistency": 68, "overtaking": 65, "wet_weather": 68, "experience": 60,
-      "salary": 3, "team_id": null
+      "pace": 70, "qualifying_pace": 70, "consistency": 68, "racecraft": 65,
+      "wet_weather": 68, "tire_management": 68, "mental": 66, "experience": 62,
+      "potential": 78, "salary": 3, "team_id": null
     },
     {
       "id": "DEV", "name": "Nyck de Vries", "nationality": "Dutch", "age": 30,
-      "speed": 71, "consistency": 69, "overtaking": 70, "wet_weather": 68, "experience": 58,
-      "salary": 3, "team_id": null
+      "pace": 71, "qualifying_pace": 71, "consistency": 69, "racecraft": 70,
+      "wet_weather": 68, "tire_management": 70, "mental": 67, "experience": 58,
+      "potential": 80, "salary": 3, "team_id": null
     }
   ]
 }

@@ -3,61 +3,61 @@
     {
       "id": "red_bull", "name": "Oracle Red Bull Racing", "short_name": "Red Bull", "color": "blue",
       "budget": 120,
-      "car": { "engine": 90, "aerodynamics": 92, "reliability": 86, "tire_management": 88 },
+      "car": { "engine": 90, "aerodynamics": 92, "mechanical_grip": 89, "reliability": 86, "tire_deg": 88, "braking": 90 },
       "driver_ids": ["VER", "LAW"]
     },
     {
       "id": "ferrari", "name": "Scuderia Ferrari", "short_name": "Ferrari", "color": "red",
       "budget": 110,
-      "car": { "engine": 89, "aerodynamics": 91, "reliability": 84, "tire_management": 86 },
+      "car": { "engine": 89, "aerodynamics": 91, "mechanical_grip": 87, "reliability": 84, "tire_deg": 85, "braking": 88 },
       "driver_ids": ["LEC", "HAM"]
     },
     {
       "id": "mercedes", "name": "Mercedes-AMG Petronas F1", "short_name": "Mercedes", "color": "bright_cyan",
       "budget": 105,
-      "car": { "engine": 91, "aerodynamics": 88, "reliability": 88, "tire_management": 85 },
+      "car": { "engine": 91, "aerodynamics": 88, "mechanical_grip": 86, "reliability": 88, "tire_deg": 86, "braking": 91 },
       "driver_ids": ["RUS", "ANT"]
     },
     {
       "id": "mclaren", "name": "McLaren Formula 1 Team", "short_name": "McLaren", "color": "yellow",
       "budget": 95,
-      "car": { "engine": 88, "aerodynamics": 90, "reliability": 87, "tire_management": 90 },
+      "car": { "engine": 88, "aerodynamics": 90, "mechanical_grip": 88, "reliability": 87, "tire_deg": 90, "braking": 87 },
       "driver_ids": ["NOR", "PIA"]
     },
     {
       "id": "aston_martin", "name": "Aston Martin Aramco F1", "short_name": "Aston Martin", "color": "green",
       "budget": 75,
-      "car": { "engine": 84, "aerodynamics": 85, "reliability": 85, "tire_management": 83 },
+      "car": { "engine": 84, "aerodynamics": 85, "mechanical_grip": 83, "reliability": 85, "tire_deg": 84, "braking": 84 },
       "driver_ids": ["ALO", "STR"]
     },
     {
       "id": "alpine", "name": "BWT Alpine F1 Team", "short_name": "Alpine", "color": "cyan",
       "budget": 65,
-      "car": { "engine": 82, "aerodynamics": 83, "reliability": 82, "tire_management": 82 },
+      "car": { "engine": 82, "aerodynamics": 83, "mechanical_grip": 80, "reliability": 82, "tire_deg": 82, "braking": 81 },
       "driver_ids": ["GAS", "DOO"]
     },
     {
       "id": "williams", "name": "Williams Racing", "short_name": "Williams", "color": "bright_blue",
       "budget": 55,
-      "car": { "engine": 81, "aerodynamics": 80, "reliability": 83, "tire_management": 81 },
+      "car": { "engine": 81, "aerodynamics": 80, "mechanical_grip": 79, "reliability": 83, "tire_deg": 81, "braking": 80 },
       "driver_ids": ["SAI", "ALB"]
     },
     {
       "id": "haas", "name": "MoneyGram Haas F1 Team", "short_name": "Haas", "color": "white",
       "budget": 40,
-      "car": { "engine": 79, "aerodynamics": 78, "reliability": 81, "tire_management": 79 },
+      "car": { "engine": 79, "aerodynamics": 78, "mechanical_grip": 76, "reliability": 81, "tire_deg": 79, "braking": 78 },
       "driver_ids": ["BEA", "OCO"]
     },
     {
       "id": "audi", "name": "Audi F1 Team", "short_name": "Audi", "color": "bright_white",
       "budget": 70,
-      "car": { "engine": 83, "aerodynamics": 82, "reliability": 84, "tire_management": 83 },
+      "car": { "engine": 83, "aerodynamics": 82, "mechanical_grip": 81, "reliability": 84, "tire_deg": 83, "braking": 82 },
       "driver_ids": ["HUL", "BOR"]
     },
     {
       "id": "racing_bulls", "name": "Visa Cash App Racing Bulls", "short_name": "Racing Bulls", "color": "magenta",
       "budget": 50,
-      "car": { "engine": 83, "aerodynamics": 84, "reliability": 82, "tire_management": 82 },
+      "car": { "engine": 83, "aerodynamics": 84, "mechanical_grip": 82, "reliability": 82, "tire_deg": 82, "braking": 83 },
       "driver_ids": ["TSU", "HAD"]
     }
   ]

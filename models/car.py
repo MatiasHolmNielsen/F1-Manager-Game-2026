@@ -1,27 +1,32 @@
 from dataclasses import dataclass
 
-UPGRADE_AMOUNT = 5  # points per upgrade
+UPGRADE_AMOUNT = 5  # points gained per upgrade
 
 UPGRADE_COSTS: dict = {
     "engine": 15,
     "aerodynamics": 12,
+    "mechanical_grip": 10,
     "reliability": 8,
-    "tire_management": 10,
+    "tire_deg": 10,
+    "braking": 9,
 }
 
 
 @dataclass
 class Car:
     team_id: str
-    engine: int           # 0-100: straight-line speed
-    aerodynamics: int     # 0-100: cornering performance
-    reliability: int      # 0-100: DNF resistance
-    tire_management: int  # 0-100: tire wear rate
+    engine: int          # 0-100: straight-line power output
+    aerodynamics: int    # 0-100: downforce / high-speed cornering
+    mechanical_grip: int # 0-100: low-speed base grip (slow corners, traction)
+    reliability: int     # 0-100: DNF resistance
+    tire_deg: int        # 0-100: how gentle the car is on tyres (higher = less deg)
+    braking: int         # 0-100: brake performance — matters at heavy-braking circuits
 
     @property
     def overall(self) -> int:
         return int(
-            (self.engine + self.aerodynamics + self.reliability + self.tire_management) / 4
+            (self.engine + self.aerodynamics + self.mechanical_grip
+             + self.reliability + self.tire_deg + self.braking) / 6
         )
 
     def upgrade(self, attribute: str) -> None:
