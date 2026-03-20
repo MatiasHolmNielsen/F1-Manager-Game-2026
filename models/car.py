@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 
 UPGRADE_AMOUNT = 5  # points gained per upgrade
@@ -34,3 +35,16 @@ class Car:
     def upgrade(self, attribute: str) -> None:
         current = getattr(self, attribute)
         setattr(self, attribute, min(100, current + UPGRADE_AMOUNT))
+
+
+def upgrade_cost(attr: str, current_value: int) -> int:
+    """Exponential cost scaling — cheap at low values, expensive near the cap.
+
+    Formula: base × e^((current - 70) / 25)
+      value 70  → 1.0× base
+      value 80  → 1.5× base
+      value 90  → 2.2× base
+      value 95  → 2.7× base
+    """
+    base = UPGRADE_COSTS[attr]
+    return max(base, round(base * math.exp((current_value - 70) / 25)))

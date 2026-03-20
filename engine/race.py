@@ -142,21 +142,34 @@ def _tyre_score(strategy: RaceStrategy, circuit, weather: str, car, driver) -> f
             avg_bonus = compound_bonus
         else:
             overrun_frac = (stint.laps - life) / life
-            avg_bonus = compound_bonus - (overrun_frac * 8.0)
+            avg_bonus = compound_bonus - (overrun_frac * 12.0)
 
         stint_contributions += avg_bonus * (stint.laps / total_laps)
 
     # Pit stop time penalty (each stop after the first stint)
     num_stops = len(strategy.stints) - 1
-    pit_time = 3.5 - (car.pit_crew / 100) * 1.3   # 2.2s–3.5s range
+    pit_time = 2.1 + (90 - car.pit_crew) * 0.025  # 2.1s–2.7s range
     score_penalty_per_stop = pit_time / 1.2
     total_pit_penalty = num_stops * score_penalty_per_stop
 
     return stint_contributions - total_pit_penalty
 
 
+def _fill_to_end(
+    stints: List[TyreStint], remaining: int,
+    filler: str, circuit, car, driver,
+) -> List[TyreStint]:
+    """Append stints of `filler` compound (capped to tyre life) until remaining == 0."""
+    while remaining > 0:
+        life = adjusted_tyre_life(filler, circuit, car, driver)
+        laps = min(life, remaining)
+        stints.append(TyreStint(filler, laps))
+        remaining -= laps
+    return stints
+
+
 def suggest_strategies(circuit, weather: str, car, driver) -> List[RaceStrategy]:
-    """Return 3–4 labelled preset strategies for the given conditions."""
+    """Return 4 labelled preset strategies for the given conditions."""
     total = race_laps(circuit)
 
     if weather == "wet":
@@ -175,37 +188,40 @@ def suggest_strategies(circuit, weather: str, car, driver) -> List[RaceStrategy]
     medium_life = adjusted_tyre_life("medium", circuit, car, driver)
     soft_life   = adjusted_tyre_life("soft",   circuit, car, driver)
 
-    # Aggressive: S → H
+    # Aggressive: S → H (fill)
     soft_laps = max(1, min(soft_life, total // 3))
     aggressive = RaceStrategy(
-        stints=[TyreStint("soft", soft_laps), TyreStint("hard", total - soft_laps)],
+        stints=_fill_to_end([TyreStint("soft", soft_laps)], total - soft_laps, "hard", circuit, car, driver),
         label="Aggressive",
     )
 
-    # Medium Start: M → S
-    half = total // 2
-    balanced = RaceStrategy(
-        stints=[TyreStint("medium", half), TyreStint("soft", total - half)],
+    # Medium Start: M → H (fill)
+    med_laps = max(1, min(medium_life, total // 2))
+    medium_start = RaceStrategy(
+        stints=_fill_to_end([TyreStint("medium", med_laps)], total - med_laps, "hard", circuit, car, driver),
         label="Medium Start",
     )
 
-    # Conservative: H → S
-    hard_laps = max(1, min(hard_life, (total * 2) // 3))
+    # Conservative: H → M (fill)
+    hard_laps = max(1, min(hard_life, total // 2))
     conservative = RaceStrategy(
-        stints=[TyreStint("hard", hard_laps), TyreStint("soft", total - hard_laps)],
+        stints=_fill_to_end([TyreStint("hard", hard_laps)], total - hard_laps, "medium", circuit, car, driver),
         label="Conservative",
     )
 
-    # 2-Stop: S → M → M
-    soft_2 = max(1, min(soft_life, total // 4))
-    remaining = total - soft_2
-    m1, m2 = remaining // 2, remaining - remaining // 2
+    # 2-Stop: S → M → H (fill)
+    s2 = max(1, min(soft_life, total // 4))
+    remaining_after_s = total - s2
+    m2 = max(1, min(medium_life, remaining_after_s // 2))
     two_stop = RaceStrategy(
-        stints=[TyreStint("soft", soft_2), TyreStint("medium", m1), TyreStint("medium", m2)],
+        stints=_fill_to_end(
+            [TyreStint("soft", s2), TyreStint("medium", m2)],
+            remaining_after_s - m2, "hard", circuit, car, driver,
+        ),
         label="2-Stop",
     )
 
-    return [aggressive, balanced, conservative, two_stop]
+    return [aggressive, medium_start, conservative, two_stop]
 
 
 def ai_strategy(entry: RaceEntry, circuit, weather: str) -> RaceStrategy:
@@ -386,7 +402,24 @@ def simulate_race(
         gp = grid.index(entry.driver.id) + 1 if grid and entry.driver.id in grid else 0
         driver_safety = 1.0 - (entry.driver.racecraft / 100) * 0.20
         dnf_prob = max(0.005, (100 - entry.car.reliability) / 100 * 0.25 * driver_safety)
-        dnf = random.random() < dnf_prob
+
+        # Compute puncture risk from tyre overruns
+        puncture_prob = 0.0
+        strategy = strategies.get(entry.driver.id) if strategies else None
+        if strategy:
+            for stint in strategy.stints:
+                if not TYRE_COMPOUNDS[stint.compound]["rain"]:
+                    life = adjusted_tyre_life(stint.compound, circuit, entry.car, entry.driver)
+                    if stint.laps > life:
+                        overrun_frac = (stint.laps - life) / life
+                        puncture_prob += min(0.25, overrun_frac * 0.35)
+            puncture_prob = min(0.50, puncture_prob)
+
+        # Combined failure roll
+        is_puncture = random.random() < puncture_prob
+        regular_dnf = random.random() < dnf_prob
+        dnf = is_puncture or regular_dnf
+        dnf_reason = random.choice(["Tyre failure", "Puncture"]) if is_puncture else random.choice(DNF_REASONS)
 
         if dnf:
             results.append(RaceResult(
@@ -398,7 +431,7 @@ def simulate_race(
                 time_gap=0.0,
                 points=0,
                 dnf=True,
-                dnf_reason=random.choice(DNF_REASONS),
+                dnf_reason=dnf_reason,
                 grid_position=gp,
             ))
             continue

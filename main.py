@@ -13,11 +13,11 @@ from rich.console import Console
 from rich import box
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from models.car import UPGRADE_COSTS, UPGRADE_AMOUNT
+from models.car import UPGRADE_COSTS, UPGRADE_AMOUNT, upgrade_cost
 from models.car import Car
 from models.circuit import Circuit
 from models.driver import Driver
@@ -28,6 +28,7 @@ from engine.race import (
     race_laps, adjusted_tyre_life, TYRE_COMPOUNDS,
 )
 from engine.development import apply_development
+from engine.generation import generate_rookie
 
 DATA_DIR = Path(__file__).parent / "data"
 console = Console()
@@ -320,11 +321,12 @@ def show_standings(
     teams: Dict[str, Team],
     player_team_id: str,
     top_n: int = 10,
+    season_year: int = 2026,
 ) -> None:
     sorted_drivers = sorted(driver_pts.items(), key=lambda x: x[1], reverse=True)[:top_n]
     sorted_teams = sorted(team_pts.items(), key=lambda x: x[1], reverse=True)
 
-    d_table = Table(title="DRIVERS' CHAMPIONSHIP", box=box.SIMPLE_HEAD, show_edge=False)
+    d_table = Table(title=f"DRIVERS' CHAMPIONSHIP — Season {season_year}", box=box.SIMPLE_HEAD, show_edge=False)
     d_table.add_column("Pos", width=4, justify="center")
     d_table.add_column("Driver", min_width=18)
     d_table.add_column("Team", min_width=16)
@@ -338,7 +340,7 @@ def show_standings(
         name_str = f"[bold]{d.name}[/bold]" if is_player else (d.name if d else did)
         d_table.add_row(str(i), name_str, team_str, str(pts))
 
-    c_table = Table(title="CONSTRUCTORS' CHAMPIONSHIP", box=box.SIMPLE_HEAD, show_edge=False)
+    c_table = Table(title=f"CONSTRUCTORS' CHAMPIONSHIP — Season {season_year}", box=box.SIMPLE_HEAD, show_edge=False)
     c_table.add_column("Pos", width=4, justify="center")
     c_table.add_column("Team", min_width=18)
     c_table.add_column("Pts", justify="right", width=6)
@@ -382,8 +384,8 @@ def upgrade_car_menu(team: Team) -> None:
         table.add_column("Cost", justify="right", width=8)
 
         for num, (attr, label) in attr_map.items():
-            cost = UPGRADE_COSTS[attr]
             current = getattr(car, attr)
+            cost = upgrade_cost(attr, current)
             after = min(100, current + UPGRADE_AMOUNT)
             maxed = current >= 100
             color = "green" if team.budget >= cost and not maxed else "red"
@@ -398,7 +400,7 @@ def upgrade_car_menu(team: Team) -> None:
             break
 
         attr, label = attr_map[choice]
-        cost = UPGRADE_COSTS[attr]
+        cost = upgrade_cost(attr, getattr(team.car, attr))
 
         if team.budget < cost:
             console.print(f"[red]Not enough budget. Need €{cost}M, have €{team.budget:.1f}M[/red]")
@@ -613,10 +615,30 @@ def show_quali_results(
     console.print(table)
 
 
+_DEV_STATS = [
+    ("pace",            "Pace"),
+    ("qualifying_pace", "Qualifying"),
+    ("consistency",     "Consistency"),
+    ("racecraft",       "Racecraft"),
+    ("wet_weather",     "Wet Weather"),
+    ("tire_management", "Tyre Mgmt"),
+    ("mental",          "Mental"),
+    ("experience",      "Experience"),
+]
+
+
+def _xp_bar(xp: float, width: int = 10) -> str:
+    filled = int(xp * width)
+    bar = "█" * filled + "░" * (width - filled)
+    pct = int(xp * 100)
+    return f"[cyan]{bar}[/cyan] [dim]{pct:>3}%[/dim]"
+
+
 def show_driver_development(
     team: Team,
     drivers: Dict[str, Driver],
     gains: Dict[str, Dict[str, int]],
+    xp_gains: Dict[str, Dict[str, float]],
 ) -> None:
     panels = []
     for did in team.driver_ids:
@@ -624,17 +646,36 @@ def show_driver_development(
         if not driver:
             continue
         driver_gains = gains.get(did, {})
-        lines: List[str] = []
-        for stat, delta in driver_gains.items():
-            old_val = getattr(driver, stat) - delta
-            new_val = getattr(driver, stat)
-            stat_label = stat.replace("_", " ").title()
+        driver_xp_gains = xp_gains.get(did, {})
+
+        table = Table(box=None, show_header=False, padding=(0, 1))
+        table.add_column("Stat", min_width=12)
+        table.add_column("Val", justify="right", width=4)
+        table.add_column("XP Progress", min_width=18)
+        table.add_column("Gained", width=6, justify="right")
+        table.add_column("", width=4)
+
+        for attr, label in _DEV_STATS:
+            val = getattr(driver, attr)
+            xp = driver.xp.get(attr, 0.0)
+            delta = driver_gains.get(attr, 0)
+            gained = driver_xp_gains.get(attr, 0.0)
+
+            gained_str = f"[dim]+{gained * 100:.1f}%[/dim]" if gained > 0 else ""
+
             if delta > 0:
-                lines.append(f"[green]+{delta}[/green] {stat_label} ({old_val} → {new_val})")
+                badge = f"[bold green]+{delta}[/bold green]"
+                val_str = f"[bold green]{val}[/bold green]"
+            elif delta < 0:
+                badge = f"[bold red]{delta}[/bold red]"
+                val_str = f"[bold red]{val}[/bold red]"
             else:
-                lines.append(f"[red]{delta}[/red] {stat_label} ({old_val} → {new_val})")
-        content = "\n".join(lines) if lines else "[dim]No development this race.[/dim]"
-        panels.append(Panel(content, title=f"[bold]{driver.name}[/bold]", padding=(0, 1)))
+                badge = ""
+                val_str = str(val)
+
+            table.add_row(label, val_str, _xp_bar(xp), gained_str, badge)
+
+        panels.append(Panel(table, title=f"[bold]{driver.name}[/bold]", padding=(0, 1)))
 
     console.print()
     console.print(Panel(
@@ -657,23 +698,66 @@ def _fmt_strategy(strategy: RaceStrategy) -> str:
     return " → ".join(_fmt_stint(s) for s in strategy.stints)
 
 
-def _custom_strategy(weather: str, total_laps: int) -> RaceStrategy:
-    """Prompt the player to build a custom strategy."""
+def _custom_strategy(weather: str, total_laps: int, circuit, car, driver) -> RaceStrategy:
+    """Prompt the player to build a custom strategy with per-stint lap selection."""
     is_wet = weather == "wet"
     valid_map = {"I": "intermediate", "W": "wet"} if is_wet else {"H": "hard", "M": "medium", "S": "soft"}
     valid_keys = list(valid_map.keys())
     compound_hint = "/".join(valid_keys)
 
     while True:
-        stops_str = Prompt.ask("Number of pit stops", choices=["1", "2"])
+        stops_str = Prompt.ask("Number of pit stops", choices=["1", "2", "3"])
         num_stints = int(stops_str) + 1
-        base_laps = total_laps // num_stints
-
         stints: List[TyreStint] = []
+        remaining = total_laps
+
         for i in range(num_stints):
+            is_last = (i == num_stints - 1)
+
+            # Show tyre lives for reference on dry races
+            if not is_wet:
+                lives = {k: adjusted_tyre_life(valid_map[k], circuit, car, driver) for k in valid_keys}
+                life_hint = "  ".join(
+                    f"[{TYRE_COMPOUNDS[valid_map[k]]['color']}]{k}[/{TYRE_COMPOUNDS[valid_map[k]]['color']}] ~{lives[k]}L"
+                    for k in valid_keys
+                )
+                console.print(f"  Tyre life: {life_hint}  |  [dim]{remaining} laps remaining[/dim]")
+
             key = Prompt.ask(f"Stint {i + 1} compound [{compound_hint}]", choices=valid_keys).upper()
-            laps = base_laps if i < num_stints - 1 else total_laps - base_laps * (num_stints - 1)
-            stints.append(TyreStint(compound=valid_map[key], laps=laps))
+            compound = valid_map[key]
+            life = adjusted_tyre_life(compound, circuit, car, driver)
+
+            if is_last:
+                laps = remaining
+                overrun = laps - life
+                if overrun > 0:
+                    console.print(
+                        f"  [yellow]⚠ Last stint runs {laps} laps on {compound} "
+                        f"(life ~{life}L, overrun {overrun}L — puncture risk!)[/yellow]"
+                    )
+                else:
+                    console.print(f"  [dim]Last stint: {laps} laps (within tyre life ✓)[/dim]")
+            else:
+                # Player picks laps — leave at least 1 lap per future stint
+                max_laps = remaining - (num_stints - i - 1)
+                while True:
+                    laps_str = Prompt.ask(f"Stint {i + 1} laps [1–{max_laps}]")
+                    try:
+                        laps = int(laps_str)
+                        if 1 <= laps <= max_laps:
+                            break
+                        console.print(f"[red]Enter a number between 1 and {max_laps}.[/red]")
+                    except ValueError:
+                        console.print("[red]Enter a valid number.[/red]")
+                overrun = laps - life
+                if overrun > 0:
+                    console.print(
+                        f"  [yellow]⚠ Stint {i + 1}: {laps} laps on {compound} "
+                        f"(life ~{life}L, overrun {overrun}L — puncture risk!)[/yellow]"
+                    )
+
+            stints.append(TyreStint(compound=compound, laps=laps))
+            remaining -= laps
 
         if not is_wet and len({s.compound for s in stints}) < 2:
             console.print("[red]You must use at least 2 different compounds in dry conditions. Try again.[/red]")
@@ -745,7 +829,7 @@ def show_strategy_menu(
     if choice_idx < len(presets):
         chosen = presets[choice_idx]
     else:
-        chosen = _custom_strategy(weather, total)
+        chosen = _custom_strategy(weather, total, circuit, car, ref_driver)
 
     return {d.id: chosen for d in player_drivers}
 
@@ -797,8 +881,8 @@ def run_race_with_animation(
 
 # ─── Finances ─────────────────────────────────────────────────────────────────
 
-POSITION_PRIZE = {1: 5.5, 2: 5.0, 3: 4.5, 4: 4.0, 5: 3.5,
-                  6: 3.0, 7: 2.5, 8: 2.0, 9: 1.5, 10: 1.0}
+POSITION_PRIZE = {1: 8.0, 2: 7.0, 3: 6.0, 4: 5.0, 5: 4.0,
+                  6: 3.2, 7: 2.5, 8: 1.8, 9: 1.2, 10: 0.8}
 
 
 def _apply_race_finances(
@@ -810,10 +894,10 @@ def _apply_race_finances(
     player_results = [r for r in results if r.team_id == player_team_id]
     num_dnfs = sum(1 for r in player_results if r.dnf)
 
-    base_income     = 5.0
-    ops_cost        = -3.0
+    base_income     = 2.0
+    ops_cost        = -2.0
     dnf_repairs     = -6.0 * num_dnfs
-    constructor_win = 4.0 if any(r.position == 1 and not r.dnf for r in player_results) else 0.0
+    constructor_win = 6.0 if any(r.position == 1 and not r.dnf for r in player_results) else 0.0
 
     prize_lines = []
     total_prize = 0.0
@@ -859,128 +943,424 @@ def main() -> None:
 
     drivers = load_drivers()
     teams = load_teams(drivers)
-    circuits = load_circuits()
-    total_races = len(circuits)
 
     player_team_id = show_team_selection(teams, drivers)
     player_team = teams[player_team_id]
 
-    driver_pts: Dict[str, int] = {did: 0 for did in drivers}
-    team_pts: Dict[str, int] = {tid: 0 for tid in teams}
+    season_year = 2026
 
     console.print(
-        f"[bold]Season 2026 begins — {total_races} races ahead.[/bold]\n"
+        f"[bold]Season {season_year} begins — {len(load_circuits())} races ahead.[/bold]\n"
         f"[dim]Good luck![/dim]"
     )
     console.input("\n[dim]Press Enter to start…[/dim]")
 
-    for race_num, circuit in enumerate(circuits, 1):
-        show_race_header(circuit, race_num, total_races)
+    while True:
+        circuits = load_circuits()
+        total_races = len(circuits)
 
-        management_menu(
-            player_team, drivers, teams,
-            race_num, total_races,
-            driver_pts, team_pts,
+        driver_pts: Dict[str, int] = {did: 0 for did in drivers}
+        team_pts: Dict[str, int] = {tid: 0 for tid in teams}
+
+        for race_num, circuit in enumerate(circuits, 1):
+            show_race_header(circuit, race_num, total_races)
+
+            management_menu(
+                player_team, drivers, teams,
+                race_num, total_races,
+                driver_pts, team_pts,
+            )
+
+            # Build all entries (before qualifying)
+            entries: List[RaceEntry] = []
+            for team in teams.values():
+                for did in team.driver_ids:
+                    d = drivers.get(did)
+                    if d:
+                        entries.append(RaceEntry(
+                            driver=d, car=team.car,
+                            team_id=team.id, team_name=team.short_name,
+                            team_color=team.color,
+                        ))
+            random.shuffle(entries)
+
+            # ── Qualifying ──────────────────────────────────────────────
+            quali_weather = "wet" if random.random() * 100 < circuit.weather_chance * 0.5 else "dry"
+            show_race_header(circuit, race_num, total_races, quali_weather)
+            console.print(Panel("[bold cyan]QUALIFYING SESSION[/bold cyan]", border_style="cyan", padding=(0, 2)))
+            quali_results = run_qualifying_with_animation(entries, circuit, quali_weather)
+            show_quali_results(quali_results, player_team_id, circuit)
+            grid = [qr.driver.id for qr in quali_results]
+            console.input("\n[dim]Press Enter for strategy selection…[/dim]")
+
+            # ── Race ────────────────────────────────────────────────────
+            weather = "wet" if random.random() * 100 < circuit.weather_chance else "dry"
+            show_race_header(circuit, race_num, total_races, weather)
+
+            # Strategy selection — player picks, AI fills the rest
+            player_strategies = show_strategy_menu(circuit, weather, player_team, drivers)
+            show_strategy_summary(player_team, drivers, player_strategies)
+            strategies: Dict[str, RaceStrategy] = dict(player_strategies)
+            for entry in entries:
+                if entry.driver.id not in strategies:
+                    strategies[entry.driver.id] = ai_strategy(entry, circuit, weather)
+
+            console.input("\n[dim]Press Enter to start the race…[/dim]")
+            results = run_race_with_animation(entries, circuit, weather, grid=grid, strategies=strategies)
+
+            # ── View 1: Race Result ──────────────────────────────────
+            console.clear()
+            show_race_header(circuit, race_num, total_races, weather)
+            show_race_results(results, player_team_id, circuit)
+            console.input("\n[dim]Press Enter for finances…[/dim]")
+
+            # ── View 2: Finances ─────────────────────────────────────
+            console.clear()
+            show_race_header(circuit, race_num, total_races, weather)
+            _apply_race_finances(player_team, results, player_team_id)
+            console.input("\n[dim]Press Enter for driver development…[/dim]")
+
+            # ── View 3: Driver Development ───────────────────────────
+            console.clear()
+            show_race_header(circuit, race_num, total_races, weather)
+            gains, xp_gains = apply_development(results, drivers, grid=grid)
+            show_driver_development(player_team, drivers, gains, xp_gains)
+            console.input("\n[dim]Press Enter for championship standings…[/dim]")
+
+            # ── View 4: Championship ─────────────────────────────────
+            console.clear()
+            for r in results:
+                driver_pts[r.driver.id] = driver_pts.get(r.driver.id, 0) + r.points
+                team_pts[r.team_id] = team_pts.get(r.team_id, 0) + r.points
+            show_standings(driver_pts, team_pts, drivers, teams, player_team_id, season_year=season_year)
+
+            if race_num < total_races:
+                console.input("\n[dim]Press Enter for the next race…[/dim]")
+            else:
+                console.input("\n[dim]Press Enter to see the final standings…[/dim]")
+
+        # ── Season summary ────────────────────────────────────────────
+        console.print()
+        console.print(
+            Panel(
+                Align.center(Text.from_markup(f"[bold yellow]SEASON {season_year} — FINAL STANDINGS[/bold yellow]")),
+                border_style="yellow",
+                box=box.DOUBLE_EDGE,
+                padding=(1, 6),
+            )
         )
 
-        # Build all entries (before qualifying)
-        entries: List[RaceEntry] = []
-        for team in teams.values():
-            for did in team.driver_ids:
-                d = drivers.get(did)
-                if d:
-                    entries.append(RaceEntry(
-                        driver=d, car=team.car,
-                        team_id=team.id, team_name=team.short_name,
-                        team_color=team.color,
-                    ))
-        random.shuffle(entries)
+        show_standings(driver_pts, team_pts, drivers, teams, player_team_id, top_n=20, season_year=season_year)
 
-        # ── Qualifying ──────────────────────────────────────────────
-        quali_weather = "wet" if random.random() * 100 < circuit.weather_chance * 0.5 else "dry"
-        show_race_header(circuit, race_num, total_races, quali_weather)
-        console.print(Panel("[bold cyan]QUALIFYING SESSION[/bold cyan]", border_style="cyan", padding=(0, 2)))
-        quali_results = run_qualifying_with_animation(entries, circuit, quali_weather)
-        show_quali_results(quali_results, player_team_id, circuit)
-        grid = [qr.driver.id for qr in quali_results]
-        console.input("\n[dim]Press Enter for strategy selection…[/dim]")
+        sorted_teams_final = sorted(team_pts.items(), key=lambda x: x[1], reverse=True)
+        team_pos = next(
+            (i for i, (tid, _) in enumerate(sorted_teams_final, 1) if tid == player_team_id), 0
+        )
+        p_pts = team_pts.get(player_team_id, 0)
 
-        # ── Race ────────────────────────────────────────────────────
-        weather = "wet" if random.random() * 100 < circuit.weather_chance else "dry"
-        show_race_header(circuit, race_num, total_races, weather)
+        sorted_drivers_final = sorted(driver_pts.items(), key=lambda x: x[1], reverse=True)
+        player_driver_results = [
+            (drivers[did].name, pts, pos + 1)
+            for pos, (did, pts) in enumerate(sorted_drivers_final)
+            if drivers.get(did) and drivers[did].team_id == player_team_id
+        ]
 
-        # Strategy selection — player picks, AI fills the rest
-        player_strategies = show_strategy_menu(circuit, weather, player_team, drivers)
-        show_strategy_summary(player_team, drivers, player_strategies)
-        strategies: Dict[str, RaceStrategy] = dict(player_strategies)
-        for entry in entries:
-            if entry.driver.id not in strategies:
-                strategies[entry.driver.id] = ai_strategy(entry, circuit, weather)
+        driver_summary = "\n".join(
+            f"  {name}: P{pos} — {pts} pts" for name, pts, pos in player_driver_results
+        )
 
-        console.input("\n[dim]Press Enter to start the race…[/dim]")
-        results = run_race_with_animation(entries, circuit, weather, grid=grid, strategies=strategies)
-        show_race_results(results, player_team_id, circuit)
-        _apply_race_finances(player_team, results, player_team_id)
+        console.print()
+        console.print(
+            Panel(
+                f"[bold {player_team.color}]{player_team.name}[/bold {player_team.color}]\n\n"
+                f"Constructors: [bold]P{team_pos}[/bold]  ({p_pts} pts)\n"
+                f"Budget remaining: [bold green]€{player_team.budget:.1f}M[/bold green]\n\n"
+                f"[dim]Drivers:[/dim]\n{driver_summary}",
+                title=f"[bold]YOUR SEASON {season_year} SUMMARY[/bold]",
+                border_style=player_team.color,
+                padding=(1, 2),
+            )
+        )
+        console.print()
 
-        # Driver development
-        gains = apply_development(results, drivers, grid=grid)
-        show_driver_development(player_team, drivers, gains)
+        play_next = _run_offseason(season_year, teams, drivers, team_pts, player_team_id)
+        if not play_next:
+            break
+        season_year += 1
 
-        # Update standings
-        for r in results:
-            driver_pts[r.driver.id] = driver_pts.get(r.driver.id, 0) + r.points
-            team_pts[r.team_id] = team_pts.get(r.team_id, 0) + r.points
+        console.print(
+            f"[bold]Season {season_year} begins — {len(load_circuits())} races ahead.[/bold]\n"
+            f"[dim]Good luck![/dim]"
+        )
+        console.input("\n[dim]Press Enter to start…[/dim]")
 
-        show_standings(driver_pts, team_pts, drivers, teams, player_team_id)
 
-        if race_num < total_races:
-            console.input("\n[dim]Press Enter for the next race…[/dim]")
-        else:
-            console.input("\n[dim]Press Enter to see the final standings…[/dim]")
+# ─── Off-Season ───────────────────────────────────────────────────────────────
 
-    # ── Season summary ────────────────────────────────────────────
+CONSTRUCTOR_PRIZE = {1: 80, 2: 60, 3: 45, 4: 35, 5: 28, 6: 22, 7: 17, 8: 12, 9: 8, 10: 5}
+
+
+def _run_offseason(
+    season_year: int,
+    teams: Dict[str, Team],
+    drivers: Dict[str, Driver],
+    team_pts: Dict[str, int],
+    player_team_id: str,
+) -> bool:
+    """Run off-season logic. Returns True if the player wants to continue."""
+    player_team = teams[player_team_id]
+
+    # 1. Prize money payout
+    sorted_teams = sorted(team_pts.items(), key=lambda x: x[1], reverse=True)
+    prize_rows: List[tuple] = []
+    for pos, (tid, _) in enumerate(sorted_teams, 1):
+        prize = CONSTRUCTOR_PRIZE.get(pos, 0)
+        teams[tid].budget += prize
+        is_player = tid == player_team_id
+        prize_rows.append((pos, teams[tid].name, prize, is_player))
+
+    prize_table = Table(
+        title="CONSTRUCTOR CHAMPIONSHIP PRIZE MONEY",
+        box=box.SIMPLE_HEAD, show_edge=False,
+    )
+    prize_table.add_column("Pos", width=4, justify="center")
+    prize_table.add_column("Team", min_width=22)
+    prize_table.add_column("Prize", justify="right", width=10)
+    for pos, name, prize, is_player in prize_rows:
+        style = "bold green" if is_player else ""
+        prize_table.add_row(
+            str(pos),
+            f"[{style}]{name}[/{style}]" if style else name,
+            f"[green]+€{prize}M[/green]",
+        )
+
+    # 2. Age all drivers
+    for d in drivers.values():
+        d.age += 1
+
+    # 3. Retirement roll
+    retired_names: List[str] = []
+    for d in list(drivers.values()):
+        if d.team_id is None:
+            continue
+        retire = False
+        if d.age >= 42 and random.random() < 0.65:
+            retire = True
+        elif d.age >= 40 and random.random() < 0.40:
+            retire = True
+        elif d.age >= 38 and random.random() < 0.18:
+            retire = True
+        elif d.age >= 35 and random.random() < 0.05:
+            retire = True
+        if retire:
+            retired_names.append(d.name)
+            team = teams.get(d.team_id)
+            if team and d.id in team.driver_ids:
+                team.driver_ids.remove(d.id)
+            d.team_id = None
+
+    # 4. Car degradation — all teams, all attributes lose 2–5 points (floor 40)
+    _CAR_ATTRS = list(UPGRADE_COSTS.keys())
+    _DEGRADE_FLOOR = 40
+    player_degrade: Dict[str, int] = {}
+    for team in teams.values():
+        for attr in _CAR_ATTRS:
+            current = getattr(team.car, attr)
+            loss = random.randint(2, 5)
+            new_val = max(_DEGRADE_FLOOR, current - loss)
+            setattr(team.car, attr, new_val)
+            if team.id == player_team_id:
+                player_degrade[attr] = new_val - current  # negative
+
+    degrade_table = Table(
+        title=f"[bold {player_team.color}]{player_team.name}[/bold {player_team.color}]  — Car Component Wear",
+        box=box.SIMPLE_HEAD, show_edge=False,
+    )
+    degrade_table.add_column("Component", min_width=18)
+    degrade_table.add_column("Change", justify="right", width=8)
+    degrade_table.add_column("New Rating", justify="right", width=10)
+    attr_labels = {
+        "engine": "Engine", "aerodynamics": "Aerodynamics",
+        "mechanical_grip": "Mechanical Grip", "reliability": "Reliability",
+        "tire_deg": "Tyre Degradation", "braking": "Braking", "pit_crew": "Pit Crew",
+    }
+    for attr in _CAR_ATTRS:
+        delta = player_degrade.get(attr, 0)
+        new_val = getattr(player_team.car, attr)
+        degrade_table.add_row(
+            attr_labels[attr],
+            f"[red]{delta}[/red]",
+            str(new_val),
+        )
+
+    # 5. Off-season summary panel
     console.print()
     console.print(
         Panel(
-            Align.center(Text.from_markup("[bold yellow]SEASON 2026 — FINAL STANDINGS[/bold yellow]")),
+            Align.center(Text.from_markup(f"[bold yellow]SEASON {season_year} OFF-SEASON[/bold yellow]")),
             border_style="yellow",
             box=box.DOUBLE_EDGE,
-            padding=(1, 6),
+            padding=(1, 4),
         )
     )
-
-    show_standings(driver_pts, team_pts, drivers, teams, player_team_id, top_n=20)
-
-    sorted_teams = sorted(team_pts.items(), key=lambda x: x[1], reverse=True)
-    team_pos = next(
-        (i for i, (tid, _) in enumerate(sorted_teams, 1) if tid == player_team_id), 0
-    )
-    p_pts = team_pts.get(player_team_id, 0)
-
-    sorted_drivers = sorted(driver_pts.items(), key=lambda x: x[1], reverse=True)
-    player_driver_results = [
-        (drivers[did].name, pts, pos + 1)
-        for pos, (did, pts) in enumerate(sorted_drivers)
-        if drivers.get(did) and drivers[did].team_id == player_team_id
-    ]
-
-    driver_summary = "\n".join(
-        f"  {name}: P{pos} — {pts} pts" for name, pts, pos in player_driver_results
-    )
-
+    console.print(prize_table)
     console.print()
+    console.print(degrade_table)
+    if retired_names:
+        console.print()
+        console.print(
+            Panel(
+                "\n".join(f"  [dim]•[/dim] {n}" for n in retired_names),
+                title="[bold]RETIREMENTS[/bold]",
+                border_style="red",
+                padding=(0, 2),
+            )
+        )
+    else:
+        console.print("\n[dim]No driver retirements this off-season.[/dim]")
     console.print(
-        Panel(
-            f"[bold {player_team.color}]{player_team.name}[/bold {player_team.color}]\n\n"
-            f"Constructors: [bold]P{team_pos}[/bold]  ({p_pts} pts)\n"
-            f"Budget remaining: [bold green]€{player_team.budget:.1f}M[/bold green]\n\n"
-            f"[dim]Drivers:[/dim]\n{driver_summary}",
-            title="[bold]YOUR SEASON SUMMARY[/bold]",
-            border_style=player_team.color,
-            padding=(1, 2),
-        )
+        f"\n[bold {player_team.color}]{player_team.name}[/bold {player_team.color}] "
+        f"budget: [bold green]€{player_team.budget:.1f}M[/bold green]"
     )
     console.print()
+
+    # 6. Player driver market
+    existing_ids = set(drivers.keys())
+    _player_offseason_market(player_team, drivers, teams, existing_ids, season_year)
+
+    # 7. AI teams fill vacant seats
+    free_agents = sorted(
+        [d for d in drivers.values() if d.team_id is None],
+        key=lambda d: d.overall, reverse=True,
+    )
+    for team in teams.values():
+        if team.id == player_team_id:
+            continue
+        while len(team.driver_ids) < 2:
+            if free_agents:
+                new_d = free_agents.pop(0)
+            else:
+                new_d = generate_rookie(existing_ids, season_year)
+                drivers[new_d.id] = new_d
+            new_d.team_id = team.id
+            team.driver_ids.append(new_d.id)
+
+    # 8. AI car upgrades — prefer cheapest available attribute (lowest current value)
+    for team in teams.values():
+        if team.id == player_team_id:
+            continue
+        budget_to_spend = team.budget * 0.20
+        attrs = list(UPGRADE_COSTS.keys())
+        attempts = 0
+        while budget_to_spend > 0 and attempts < len(attrs) * 2:
+            attrs_by_value = sorted(attrs, key=lambda a: getattr(team.car, a))
+            attr = attrs_by_value[0]
+            current_val = getattr(team.car, attr)
+            cost = upgrade_cost(attr, current_val)
+            if cost <= budget_to_spend and current_val < 100:
+                team.car.upgrade(attr)
+                team.budget -= cost
+                budget_to_spend -= cost
+            else:
+                attempts += 1
+
+    # 8. Ask to continue
+    return Confirm.ask(f"Start Season {season_year + 1}?")
+
+
+def _player_offseason_market(
+    team: Team,
+    drivers: Dict[str, Driver],
+    teams: Dict[str, Team],
+    existing_ids: set,
+    season_year: int,
+) -> None:
+    """Let the player manage their driver lineup in the off-season."""
+    if not Confirm.ask("Manage your driver lineup?", default=False):
+        return
+
+    while True:
+        console.print()
+        console.print(Panel("[bold]OFF-SEASON DRIVER MARKET[/bold]", border_style="cyan", padding=(0, 2)))
+
+        # Current roster
+        console.print("[bold]Your current drivers:[/bold]")
+        for slot, did in enumerate(team.driver_ids, 1):
+            d = drivers.get(did)
+            if d:
+                console.print(f"  Seat {slot}: {d.name}  (OVR {d.overall}, Age {d.age}, €{d.salary}M/season)")
+        vacant = 2 - len(team.driver_ids)
+        if vacant > 0:
+            for v in range(vacant):
+                console.print(f"  Seat {len(team.driver_ids) + v + 1}: [red]VACANT[/red]")
+        console.print()
+
+        # Generate rookies to show alongside free agents
+        free_agents = [d for d in drivers.values() if d.team_id is None]
+        new_rookies: List[Driver] = []
+        for _ in range(3):
+            r = generate_rookie(existing_ids, season_year)
+            new_rookies.append(r)
+
+        all_candidates = free_agents + new_rookies
+        fa_table = Table(title="Available Drivers (Free Agents + Rookies)", box=box.SIMPLE_HEAD, show_edge=False)
+        fa_table.add_column("#", width=3)
+        fa_table.add_column("Name", min_width=18)
+        fa_table.add_column("OVR", justify="center", width=5)
+        fa_table.add_column("Age", justify="center", width=5)
+        fa_table.add_column("POT", justify="center", width=5)
+        fa_table.add_column("Salary", justify="right", width=8)
+        fa_table.add_column("Type", width=8)
+        for i, d in enumerate(all_candidates, 1):
+            kind = "[dim]Free Agent[/dim]" if d in free_agents else "[cyan]Rookie[/cyan]"
+            fa_table.add_row(str(i), d.name, str(d.overall), str(d.age), str(d.potential), f"€{d.salary}M", kind)
+        console.print(fa_table)
+
+        console.print("[dim]Options: 'R<seat>' to release (e.g. R1), 'S<#>' to sign candidate (e.g. S3), or '0' to finish[/dim]")
+        choice = Prompt.ask("Action", default="0").strip().upper()
+
+        if choice == "0":
+            # Ensure player team is fully staffed before leaving
+            if len(team.driver_ids) < 2:
+                console.print("[yellow]You must fill all seats before continuing.[/yellow]")
+                continue
+            break
+
+        if choice.startswith("R") and len(choice) > 1:
+            try:
+                seat_idx = int(choice[1:]) - 1
+                if 0 <= seat_idx < len(team.driver_ids):
+                    released_id = team.driver_ids.pop(seat_idx)
+                    released = drivers.get(released_id)
+                    if released:
+                        released.team_id = None
+                        console.print(f"[yellow]{released.name} released to free agency.[/yellow]")
+                else:
+                    console.print("[red]Invalid seat number.[/red]")
+            except ValueError:
+                console.print("[red]Invalid command.[/red]")
+
+        elif choice.startswith("S") and len(choice) > 1:
+            if len(team.driver_ids) >= 2:
+                console.print("[yellow]Both seats are already filled. Release a driver first.[/yellow]")
+                continue
+            try:
+                cand_idx = int(choice[1:]) - 1
+                if 0 <= cand_idx < len(all_candidates):
+                    new_d = all_candidates[cand_idx]
+                    # If it's a rookie not yet in drivers dict, add them
+                    if new_d not in free_agents:
+                        drivers[new_d.id] = new_d
+                        existing_ids.add(new_d.id)
+                    new_d.team_id = team.id
+                    team.driver_ids.append(new_d.id)
+                    console.print(f"[green]✓ {new_d.name} signed![/green]")
+                else:
+                    console.print("[red]Invalid candidate number.[/red]")
+            except ValueError:
+                console.print("[red]Invalid command.[/red]")
+        else:
+            console.print("[red]Unknown command. Use R<seat>, S<#>, or 0.[/red]")
 
 
 if __name__ == "__main__":

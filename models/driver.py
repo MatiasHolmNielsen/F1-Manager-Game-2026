@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, Optional
 
 
 @dataclass
@@ -24,6 +24,7 @@ class Driver:
 
     salary: int           # M€ per season
     team_id: Optional[str] = None
+    xp: Dict[str, float] = field(default_factory=dict)  # fractional XP per stat (0.0–1.0)
 
     @property
     def overall(self) -> int:

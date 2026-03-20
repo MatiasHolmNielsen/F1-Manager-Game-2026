@@ -46,14 +46,20 @@ def apply_development(
     results: List[RaceResult],
     drivers: Dict[str, Driver],
     grid: Optional[List[str]] = None,
-) -> Dict[str, Dict[str, int]]:
-    """Apply post-race stat development to all drivers. Returns {driver_id: {stat: delta}}."""
+) -> tuple:
+    """Apply post-race stat development to all drivers.
+
+    Returns (changes, xp_gains) where:
+      changes   = {driver_id: {stat: int_delta}}
+      xp_gains  = {driver_id: {stat: float}} — raw XP added this race per stat
+    """
     from engine.race import RaceResult  # local import to avoid circular at module level
 
     # Build race-result lookup: driver_id -> RaceResult
     result_map: Dict[str, RaceResult] = {r.driver.id: r for r in results}
 
     changes: Dict[str, Dict[str, int]] = {}
+    xp_gains: Dict[str, Dict[str, float]] = {}
 
     for driver_id, driver in drivers.items():
         race_result = result_map.get(driver_id)
@@ -85,6 +91,7 @@ def apply_development(
             places_mult = max(0.5, min(1.5, 1.0 + places_gained * 0.04))
 
         driver_changes: Dict[str, int] = {}
+        driver_xp_gains: Dict[str, float] = {}
 
         for stat, growth_rate in STAT_GROWTH_RATE.items():
             current = getattr(driver, stat)
@@ -114,9 +121,11 @@ def apply_development(
             )
             raw_xp = raw_xp * (1 + quali_boost)
 
-            increment = int(raw_xp)
-            if random.random() < (raw_xp - int(raw_xp)):
-                increment += 1
+            # Accumulate into persistent XP pool; trigger +1 when pool crosses 1.0
+            driver_xp_gains[stat] = raw_xp
+            driver.xp[stat] = driver.xp.get(stat, 0.0) + raw_xp
+            increment = int(driver.xp[stat])
+            driver.xp[stat] -= increment
 
             if increment <= 0:
                 continue
@@ -129,5 +138,7 @@ def apply_development(
 
         if driver_changes:
             changes[driver_id] = driver_changes
+        if driver_xp_gains:
+            xp_gains[driver_id] = driver_xp_gains
 
-    return changes
+    return changes, xp_gains
