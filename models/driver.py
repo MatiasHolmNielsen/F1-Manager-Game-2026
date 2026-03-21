@@ -13,11 +13,14 @@ class Driver:
     pace: int             # race pace — sustained lap speed over a stint
     qualifying_pace: int  # one-lap speed — extracting maximum in a single lap
     consistency: int      # lap-to-lap variance; reduces randomness in simulation
-    racecraft: int        # overtaking, defending, positioning, avoiding incidents
+    overtaking: int       # aggression + success rate when attacking
+    defending: int        # holding position under pressure; blocking lines
+    car_control: int      # incident avoidance, mechanical sympathy, error rate
     wet_weather: int      # performance in rain (replaces dry pace when it rains)
     tire_management: int  # tyre preservation skill — extends stint length
     mental: int           # under pressure, recovery from incidents, big-moment focus
     experience: int       # circuit knowledge, strategic awareness, fewer mistakes
+    aggression: int       # wheel-to-wheel intensity; boosts overtaking but raises collision risk
 
     # ── Development ────────────────────────────────────────────────
     potential: int        # ceiling overall — how good this driver can become
@@ -32,11 +35,14 @@ class Driver:
             self.pace            * 0.25
             + self.qualifying_pace * 0.08
             + self.consistency   * 0.18
-            + self.racecraft     * 0.18
+            + self.overtaking    * 0.07
+            + self.defending     * 0.04
+            + self.car_control   * 0.03
+            + self.aggression    * 0.03
             + self.wet_weather   * 0.07
             + self.tire_management * 0.08
             + self.mental        * 0.08
-            + self.experience    * 0.08
+            + self.experience    * 0.09
         )
 
     @property

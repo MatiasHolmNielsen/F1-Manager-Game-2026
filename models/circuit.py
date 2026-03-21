@@ -12,6 +12,7 @@ class Circuit:
     overtaking_difficulty: int  # 0-100: higher = harder to overtake
     weather_chance: int         # 0-100: % chance of rain
     tire_wear: str              # low / medium / high
+    pit_lane_loss: int          # seconds lost driving through the pit lane (entry + traversal + exit)
 
     @property
     def aero_weight(self) -> float:

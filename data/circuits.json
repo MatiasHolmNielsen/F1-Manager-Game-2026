@@ -1,84 +1,104 @@
 {
   "circuits": [
     {
-      "id": "bahrain", "name": "Bahrain Grand Prix", "country": "Bahrain", "flag": "\ud83c\udde7\ud83c\udded",
-      "length_km": 5.412, "corners": 15, "overtaking_difficulty": 30, "weather_chance": 5, "tire_wear": "high"
+      "id": "bahrain", "name": "Bahrain Grand Prix", "country": "Bahrain", "flag": "🇧🇭",
+      "length_km": 5.412, "corners": 15, "overtaking_difficulty": 30, "weather_chance": 5, "tire_wear": "high",
+      "pit_lane_loss": 22
     },
     {
-      "id": "saudi_arabia", "name": "Saudi Arabian Grand Prix", "country": "Saudi Arabia", "flag": "\ud83c\uddf8\ud83c\udde6",
-      "length_km": 6.174, "corners": 27, "overtaking_difficulty": 65, "weather_chance": 5, "tire_wear": "medium"
+      "id": "saudi_arabia", "name": "Saudi Arabian Grand Prix", "country": "Saudi Arabia", "flag": "🇸🇦",
+      "length_km": 6.174, "corners": 27, "overtaking_difficulty": 65, "weather_chance": 5, "tire_wear": "medium",
+      "pit_lane_loss": 23
     },
     {
-      "id": "australia", "name": "Australian Grand Prix", "country": "Australia", "flag": "\ud83c\udde6\ud83c\uddfa",
-      "length_km": 5.278, "corners": 16, "overtaking_difficulty": 45, "weather_chance": 20, "tire_wear": "medium"
+      "id": "australia", "name": "Australian Grand Prix", "country": "Australia", "flag": "🇦🇺",
+      "length_km": 5.278, "corners": 16, "overtaking_difficulty": 45, "weather_chance": 20, "tire_wear": "medium",
+      "pit_lane_loss": 22
     },
     {
-      "id": "japan", "name": "Japanese Grand Prix", "country": "Japan", "flag": "\ud83c\uddef\ud83c\uddf5",
-      "length_km": 5.807, "corners": 18, "overtaking_difficulty": 60, "weather_chance": 35, "tire_wear": "high"
+      "id": "japan", "name": "Japanese Grand Prix", "country": "Japan", "flag": "🇯🇵",
+      "length_km": 5.807, "corners": 18, "overtaking_difficulty": 60, "weather_chance": 35, "tire_wear": "high",
+      "pit_lane_loss": 21
     },
     {
-      "id": "china", "name": "Chinese Grand Prix", "country": "China", "flag": "\ud83c\udde8\ud83c\uddf3",
-      "length_km": 5.451, "corners": 16, "overtaking_difficulty": 40, "weather_chance": 30, "tire_wear": "high"
+      "id": "china", "name": "Chinese Grand Prix", "country": "China", "flag": "🇨🇳",
+      "length_km": 5.451, "corners": 16, "overtaking_difficulty": 40, "weather_chance": 30, "tire_wear": "high",
+      "pit_lane_loss": 22
     },
     {
-      "id": "miami", "name": "Miami Grand Prix", "country": "USA", "flag": "\ud83c\uddfa\ud83c\uddf8",
-      "length_km": 5.412, "corners": 19, "overtaking_difficulty": 45, "weather_chance": 25, "tire_wear": "medium"
+      "id": "miami", "name": "Miami Grand Prix", "country": "USA", "flag": "🇺🇸",
+      "length_km": 5.412, "corners": 19, "overtaking_difficulty": 45, "weather_chance": 25, "tire_wear": "medium",
+      "pit_lane_loss": 24
     },
     {
-      "id": "monaco", "name": "Monaco Grand Prix", "country": "Monaco", "flag": "\ud83c\uddf2\ud83c\udde8",
-      "length_km": 3.337, "corners": 19, "overtaking_difficulty": 95, "weather_chance": 20, "tire_wear": "low"
+      "id": "monaco", "name": "Monaco Grand Prix", "country": "Monaco", "flag": "🇲🇨",
+      "length_km": 3.337, "corners": 19, "overtaking_difficulty": 95, "weather_chance": 20, "tire_wear": "low",
+      "pit_lane_loss": 27
     },
     {
-      "id": "spain", "name": "Spanish Grand Prix", "country": "Spain", "flag": "\ud83c\uddea\ud83c\uddf8",
-      "length_km": 4.675, "corners": 16, "overtaking_difficulty": 55, "weather_chance": 10, "tire_wear": "high"
+      "id": "spain", "name": "Spanish Grand Prix", "country": "Spain", "flag": "🇪🇸",
+      "length_km": 4.675, "corners": 16, "overtaking_difficulty": 55, "weather_chance": 10, "tire_wear": "high",
+      "pit_lane_loss": 24
     },
     {
-      "id": "canada", "name": "Canadian Grand Prix", "country": "Canada", "flag": "\ud83c\udde8\ud83c\udde6",
-      "length_km": 4.361, "corners": 14, "overtaking_difficulty": 35, "weather_chance": 30, "tire_wear": "medium"
+      "id": "canada", "name": "Canadian Grand Prix", "country": "Canada", "flag": "🇨🇦",
+      "length_km": 4.361, "corners": 14, "overtaking_difficulty": 35, "weather_chance": 30, "tire_wear": "medium",
+      "pit_lane_loss": 23
     },
     {
-      "id": "austria", "name": "Austrian Grand Prix", "country": "Austria", "flag": "\ud83c\udde6\ud83c\uddf9",
-      "length_km": 4.318, "corners": 10, "overtaking_difficulty": 30, "weather_chance": 40, "tire_wear": "medium"
+      "id": "austria", "name": "Austrian Grand Prix", "country": "Austria", "flag": "🇦🇹",
+      "length_km": 4.318, "corners": 10, "overtaking_difficulty": 30, "weather_chance": 40, "tire_wear": "medium",
+      "pit_lane_loss": 20
     },
     {
-      "id": "britain", "name": "British Grand Prix", "country": "Great Britain", "flag": "\ud83c\uddec\ud83c\udde7",
-      "length_km": 5.891, "corners": 18, "overtaking_difficulty": 40, "weather_chance": 50, "tire_wear": "high"
+      "id": "britain", "name": "British Grand Prix", "country": "Great Britain", "flag": "🇬🇧",
+      "length_km": 5.891, "corners": 18, "overtaking_difficulty": 40, "weather_chance": 50, "tire_wear": "high",
+      "pit_lane_loss": 23
     },
     {
-      "id": "hungary", "name": "Hungarian Grand Prix", "country": "Hungary", "flag": "\ud83c\udded\ud83c\uddfa",
-      "length_km": 4.381, "corners": 14, "overtaking_difficulty": 70, "weather_chance": 30, "tire_wear": "medium"
+      "id": "hungary", "name": "Hungarian Grand Prix", "country": "Hungary", "flag": "🇭🇺",
+      "length_km": 4.381, "corners": 14, "overtaking_difficulty": 70, "weather_chance": 30, "tire_wear": "medium",
+      "pit_lane_loss": 23
     },
     {
-      "id": "belgium", "name": "Belgian Grand Prix", "country": "Belgium", "flag": "\ud83c\udde7\ud83c\uddea",
-      "length_km": 7.004, "corners": 20, "overtaking_difficulty": 35, "weather_chance": 55, "tire_wear": "medium"
+      "id": "belgium", "name": "Belgian Grand Prix", "country": "Belgium", "flag": "🇧🇪",
+      "length_km": 7.004, "corners": 20, "overtaking_difficulty": 35, "weather_chance": 55, "tire_wear": "medium",
+      "pit_lane_loss": 19
     },
     {
-      "id": "netherlands", "name": "Dutch Grand Prix", "country": "Netherlands", "flag": "\ud83c\uddf3\ud83c\uddf1",
-      "length_km": 4.259, "corners": 14, "overtaking_difficulty": 75, "weather_chance": 40, "tire_wear": "medium"
+      "id": "netherlands", "name": "Dutch Grand Prix", "country": "Netherlands", "flag": "🇳🇱",
+      "length_km": 4.259, "corners": 14, "overtaking_difficulty": 75, "weather_chance": 40, "tire_wear": "medium",
+      "pit_lane_loss": 22
     },
     {
-      "id": "italy", "name": "Italian Grand Prix", "country": "Italy", "flag": "\ud83c\uddee\ud83c\uddf9",
-      "length_km": 5.793, "corners": 11, "overtaking_difficulty": 25, "weather_chance": 20, "tire_wear": "low"
+      "id": "italy", "name": "Italian Grand Prix", "country": "Italy", "flag": "🇮🇹",
+      "length_km": 5.793, "corners": 11, "overtaking_difficulty": 25, "weather_chance": 20, "tire_wear": "low",
+      "pit_lane_loss": 23
     },
     {
-      "id": "singapore", "name": "Singapore Grand Prix", "country": "Singapore", "flag": "\ud83c\uddf8\ud83c\uddec",
-      "length_km": 5.063, "corners": 23, "overtaking_difficulty": 80, "weather_chance": 40, "tire_wear": "medium"
+      "id": "singapore", "name": "Singapore Grand Prix", "country": "Singapore", "flag": "🇸🇬",
+      "length_km": 5.063, "corners": 23, "overtaking_difficulty": 80, "weather_chance": 40, "tire_wear": "medium",
+      "pit_lane_loss": 30
     },
     {
-      "id": "usa", "name": "United States Grand Prix", "country": "USA", "flag": "\ud83c\uddfa\ud83c\uddf8",
-      "length_km": 5.513, "corners": 20, "overtaking_difficulty": 40, "weather_chance": 25, "tire_wear": "high"
+      "id": "usa", "name": "United States Grand Prix", "country": "USA", "flag": "🇺🇸",
+      "length_km": 5.513, "corners": 20, "overtaking_difficulty": 40, "weather_chance": 25, "tire_wear": "high",
+      "pit_lane_loss": 21
     },
     {
-      "id": "mexico", "name": "Mexico City Grand Prix", "country": "Mexico", "flag": "\ud83c\uddf2\ud83c\uddfd",
-      "length_km": 4.304, "corners": 17, "overtaking_difficulty": 50, "weather_chance": 15, "tire_wear": "medium"
+      "id": "mexico", "name": "Mexico City Grand Prix", "country": "Mexico", "flag": "🇲🇽",
+      "length_km": 4.304, "corners": 17, "overtaking_difficulty": 50, "weather_chance": 15, "tire_wear": "medium",
+      "pit_lane_loss": 24
     },
     {
-      "id": "brazil", "name": "Brazilian Grand Prix", "country": "Brazil", "flag": "\ud83c\udde7\ud83c\uddf7",
-      "length_km": 4.309, "corners": 15, "overtaking_difficulty": 35, "weather_chance": 45, "tire_wear": "medium"
+      "id": "brazil", "name": "Brazilian Grand Prix", "country": "Brazil", "flag": "🇧🇷",
+      "length_km": 4.309, "corners": 15, "overtaking_difficulty": 35, "weather_chance": 45, "tire_wear": "medium",
+      "pit_lane_loss": 24
     },
     {
-      "id": "abu_dhabi", "name": "Abu Dhabi Grand Prix", "country": "UAE", "flag": "\ud83c\udde6\ud83c\uddea",
-      "length_km": 5.281, "corners": 16, "overtaking_difficulty": 45, "weather_chance": 5, "tire_wear": "medium"
+      "id": "abu_dhabi", "name": "Abu Dhabi Grand Prix", "country": "UAE", "flag": "🇦🇪",
+      "length_km": 5.281, "corners": 16, "overtaking_difficulty": 45, "weather_chance": 5, "tire_wear": "medium",
+      "pit_lane_loss": 23
     }
   ]
 }
