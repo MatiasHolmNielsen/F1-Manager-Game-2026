@@ -17,7 +17,7 @@ class Circuit:
     @property
     def aero_weight(self) -> float:
         """More corners = aerodynamics matter more."""
-        return round(min(0.80, self.corners / 90), 2)
+        return round(max(0.20, min(0.80, self.corners / 90)), 2)
 
     @property
     def engine_weight(self) -> float:

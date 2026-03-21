@@ -12,7 +12,7 @@
       "pace": 78, "qualifying_pace": 77, "consistency": 73,
       "overtaking": 74, "defending": 73, "car_control": 74,
       "wet_weather": 72, "tire_management": 73, "mental": 71, "experience": 52, "aggression": 72,
-      "potential": 89, "salary": 3, "team_id": "red_bull"
+      "potential": 89, "salary": 3, "team_id": "racing_bulls"
     },
     {
       "id": "LEC", "name": "Charles Leclerc", "nationality": "Monegasque", "age": 28,
@@ -23,10 +23,10 @@
     },
     {
       "id": "HAM", "name": "Lewis Hamilton", "nationality": "British", "age": 41,
-      "pace": 88, "qualifying_pace": 86, "consistency": 90,
+      "pace": 84, "qualifying_pace": 82, "consistency": 90,
       "overtaking": 88, "defending": 90, "car_control": 95,
       "wet_weather": 95, "tire_management": 96, "mental": 94, "experience": 99, "aggression": 72,
-      "potential": 92, "salary": 45, "team_id": "ferrari"
+      "potential": 88, "salary": 45, "team_id": "ferrari"
     },
     {
       "id": "RUS", "name": "George Russell", "nationality": "British", "age": 27,
@@ -37,10 +37,10 @@
     },
     {
       "id": "ANT", "name": "Kimi Antonelli", "nationality": "Italian", "age": 19,
-      "pace": 82, "qualifying_pace": 81, "consistency": 74,
+      "pace": 75, "qualifying_pace": 75, "consistency": 74,
       "overtaking": 76, "defending": 72, "car_control": 70,
       "wet_weather": 74, "tire_management": 74, "mental": 70, "experience": 40, "aggression": 70,
-      "potential": 96, "salary": 6, "team_id": "mercedes"
+      "potential": 96, "salary": 3, "team_id": "mercedes"
     },
     {
       "id": "NOR", "name": "Lando Norris", "nationality": "British", "age": 26,
@@ -61,7 +61,7 @@
       "pace": 86, "qualifying_pace": 84, "consistency": 93,
       "overtaking": 90, "defending": 98, "car_control": 95,
       "wet_weather": 90, "tire_management": 95, "mental": 97, "experience": 99, "aggression": 88,
-      "potential": 90, "salary": 20, "team_id": "aston_martin"
+      "potential": 86, "salary": 20, "team_id": "aston_martin"
     },
     {
       "id": "STR", "name": "Lance Stroll", "nationality": "Canadian", "age": 27,
@@ -82,7 +82,7 @@
       "pace": 74, "qualifying_pace": 74, "consistency": 70,
       "overtaking": 70, "defending": 70, "car_control": 71,
       "wet_weather": 68, "tire_management": 70, "mental": 68, "experience": 36, "aggression": 65,
-      "potential": 88, "salary": 2, "team_id": "alpine"
+      "potential": 88, "salary": 2, "team_id": null
     },
     {
       "id": "SAI", "name": "Carlos Sainz", "nationality": "Spanish", "age": 31,
@@ -131,28 +131,28 @@
       "pace": 81, "qualifying_pace": 80, "consistency": 74,
       "overtaking": 85, "defending": 76, "car_control": 72,
       "wet_weather": 78, "tire_management": 73, "mental": 72, "experience": 65, "aggression": 85,
-      "potential": 88, "salary": 7, "team_id": "racing_bulls"
+      "potential": 88, "salary": 7, "team_id": null
     },
     {
       "id": "HAD", "name": "Isack Hadjar", "nationality": "French", "age": 21,
       "pace": 76, "qualifying_pace": 76, "consistency": 72,
       "overtaking": 72, "defending": 71, "car_control": 73,
       "wet_weather": 70, "tire_management": 72, "mental": 70, "experience": 33, "aggression": 65,
-      "potential": 91, "salary": 2, "team_id": "racing_bulls"
+      "potential": 91, "salary": 2, "team_id": "red_bull"
     },
     {
       "id": "PER", "name": "Sergio Perez", "nationality": "Mexican", "age": 36,
       "pace": 78, "qualifying_pace": 77, "consistency": 76,
       "overtaking": 72, "defending": 75, "car_control": 76,
       "wet_weather": 72, "tire_management": 88, "mental": 74, "experience": 90, "aggression": 68,
-      "potential": 82, "salary": 18, "team_id": null
+      "potential": 82, "salary": 18, "team_id": "cadillac"
     },
     {
       "id": "BOT", "name": "Valtteri Bottas", "nationality": "Finnish", "age": 36,
       "pace": 75, "qualifying_pace": 74, "consistency": 75,
       "overtaking": 66, "defending": 72, "car_control": 74,
       "wet_weather": 79, "tire_management": 78, "mental": 70, "experience": 85, "aggression": 60,
-      "potential": 80, "salary": 5, "team_id": null
+      "potential": 80, "salary": 5, "team_id": "cadillac"
     },
     {
       "id": "MAG", "name": "Kevin Magnussen", "nationality": "Danish", "age": 33,
@@ -174,6 +174,41 @@
       "overtaking": 68, "defending": 70, "car_control": 72,
       "wet_weather": 68, "tire_management": 70, "mental": 67, "experience": 58, "aggression": 62,
       "potential": 80, "salary": 3, "team_id": null
+    },
+    {
+      "id": "COL", "name": "Franco Colapinto", "nationality": "Argentinian", "age": 22,
+      "pace": 78, "qualifying_pace": 79, "consistency": 72,
+      "overtaking": 74, "defending": 71, "car_control": 75,
+      "wet_weather": 72, "tire_management": 73, "mental": 72, "experience": 44, "aggression": 78,
+      "potential": 91, "salary": 3, "team_id": "alpine"
+    },
+    {
+      "id": "LIN", "name": "Arvid Lindblad", "nationality": "British", "age": 18,
+      "pace": 70, "qualifying_pace": 71, "consistency": 65,
+      "overtaking": 67, "defending": 64, "car_control": 69,
+      "wet_weather": 65, "tire_management": 66, "mental": 64, "experience": 18, "aggression": 68,
+      "potential": 95, "salary": 1, "team_id": "racing_bulls"
+    },
+    {
+      "id": "ARO", "name": "Paul Aron", "nationality": "Estonian", "age": 20,
+      "pace": 71, "qualifying_pace": 72, "consistency": 69,
+      "overtaking": 68, "defending": 67, "car_control": 70,
+      "wet_weather": 68, "tire_management": 69, "mental": 67, "experience": 28, "aggression": 66,
+      "potential": 89, "salary": 2, "team_id": null
+    },
+    {
+      "id": "CRA", "name": "Jak Crawford", "nationality": "American", "age": 20,
+      "pace": 72, "qualifying_pace": 73, "consistency": 68,
+      "overtaking": 70, "defending": 68, "car_control": 71,
+      "wet_weather": 66, "tire_management": 68, "mental": 68, "experience": 26, "aggression": 70,
+      "potential": 90, "salary": 2, "team_id": null
+    },
+    {
+      "id": "MAR", "name": "Victor Martins", "nationality": "French", "age": 23,
+      "pace": 73, "qualifying_pace": 73, "consistency": 71,
+      "overtaking": 70, "defending": 70, "car_control": 71,
+      "wet_weather": 70, "tire_management": 71, "mental": 70, "experience": 34, "aggression": 67,
+      "potential": 87, "salary": 2, "team_id": null
     }
   ]
 }

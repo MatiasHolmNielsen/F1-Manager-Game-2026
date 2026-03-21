@@ -41,6 +41,19 @@ def _run_offseason(
         is_player = tid == player_team_id
         prize_rows.append((pos, teams[tid].name, prize, is_player))
 
+    # 1b. Deduct driver salaries
+    salary_rows: List[tuple] = []
+    for team in teams.values():
+        total_salary = sum(
+            drivers[did].salary for did in team.driver_ids if did in drivers
+        )
+        team.budget -= total_salary
+        if team.id == player_team_id:
+            for did in team.driver_ids:
+                d = drivers.get(did)
+                if d:
+                    salary_rows.append((d.name, d.salary))
+
     prize_table = Table(
         title="CONSTRUCTOR CHAMPIONSHIP PRIZE MONEY",
         box=box.SIMPLE_HEAD, show_edge=False,
@@ -48,12 +61,18 @@ def _run_offseason(
     prize_table.add_column("Pos", width=4, justify="center")
     prize_table.add_column("Team", min_width=22)
     prize_table.add_column("Prize", justify="right", width=10)
+    prize_table.add_column("Driver Salaries", justify="right", width=18)
     for pos, name, prize, is_player in prize_rows:
         style = "bold green" if is_player else ""
+        if is_player and salary_rows:
+            sal_str = "  ".join(f"[red]−€{sal}M[/red] {n}" for n, sal in salary_rows)
+        else:
+            sal_str = ""
         prize_table.add_row(
             str(pos),
             f"[{style}]{name}[/{style}]" if style else name,
             f"[green]+€{prize}M[/green]",
+            sal_str,
         )
 
     # 2. Age all drivers
@@ -81,15 +100,17 @@ def _run_offseason(
                 team.driver_ids.remove(d.id)
             d.team_id = None
 
-    # 4. Car degradation — all teams, all attributes lose 2–5 points (floor 40)
+    # 4. Car degradation — all teams, all attributes lose 2–5 points (floor 60, reliability 65)
     _CAR_ATTRS = list(UPGRADE_COSTS.keys())
-    _DEGRADE_FLOOR = 40
+    _DEGRADE_FLOOR = 60
+    _RELIABILITY_FLOOR = 65
     player_degrade: Dict[str, int] = {}
     for team in teams.values():
         for attr in _CAR_ATTRS:
             current = getattr(team.car, attr)
             loss = random.randint(2, 5)
-            new_val = max(_DEGRADE_FLOOR, current - loss)
+            floor = _RELIABILITY_FLOOR if attr == "reliability" else _DEGRADE_FLOOR
+            new_val = max(floor, current - loss)
             setattr(team.car, attr, new_val)
             if team.id == player_team_id:
                 player_degrade[attr] = new_val - current  # negative
@@ -126,6 +147,7 @@ def _run_offseason(
         )
     )
     console.print(prize_table)
+    console.input("\n[dim]Press Enter to continue...[/dim]")
     console.print()
     console.print(degrade_table)
     if retired_names:
@@ -201,6 +223,12 @@ def _player_offseason_market(
     if not Confirm.ask("Manage your driver lineup?", default=False):
         return
 
+    # Generate rookies once (outside the loop) so the list stays stable
+    new_rookies: List[Driver] = []
+    for _ in range(3):
+        r = generate_rookie(existing_ids, season_year)
+        new_rookies.append(r)
+
     while True:
         console.print()
         console.print(Panel("[bold]OFF-SEASON DRIVER MARKET[/bold]", border_style="cyan", padding=(0, 2)))
@@ -217,13 +245,7 @@ def _player_offseason_market(
                 console.print(f"  Seat {len(team.driver_ids) + v + 1}: [red]VACANT[/red]")
         console.print()
 
-        # Generate rookies to show alongside free agents
         free_agents = [d for d in drivers.values() if d.team_id is None]
-        new_rookies: List[Driver] = []
-        for _ in range(3):
-            r = generate_rookie(existing_ids, season_year)
-            new_rookies.append(r)
-
         all_candidates = free_agents + new_rookies
         fa_table = Table(title="Available Drivers (Free Agents + Rookies)", box=box.SIMPLE_HEAD, show_edge=False)
         fa_table.add_column("#", width=3)
@@ -238,48 +260,65 @@ def _player_offseason_market(
             fa_table.add_row(str(i), d.name, str(d.overall), str(d.age), str(d.potential), f"€{d.salary}M", kind)
         console.print(fa_table)
 
-        console.print("[dim]Options: 'R<seat>' to release (e.g. R1), 'S<#>' to sign candidate (e.g. S3), or '0' to finish[/dim]")
-        choice = Prompt.ask("Action", default="0").strip().upper()
+        console.print(
+            "\n[dim]  [bold]0[/bold] Finish"
+            + (f"  |  [bold]R1[/bold]–[bold]R{len(team.driver_ids)}[/bold] Release a seat" if team.driver_ids else "")
+            + (f"  |  [bold]1[/bold]–[bold]{len(all_candidates)}[/bold] Sign a candidate" if len(team.driver_ids) < 2 else "")
+            + "[/dim]"
+        )
+        action_choices = ["0"]
+        for slot in range(1, len(team.driver_ids) + 1):
+            action_choices.append(f"R{slot}")
+        if len(team.driver_ids) < 2:
+            for idx in range(1, len(all_candidates) + 1):
+                action_choices.append(str(idx))
+
+        choice = Prompt.ask("Action", default="0").strip()
 
         if choice == "0":
-            # Ensure player team is fully staffed before leaving
             if len(team.driver_ids) < 2:
                 console.print("[yellow]You must fill all seats before continuing.[/yellow]")
                 continue
             break
 
-        if choice.startswith("R") and len(choice) > 1:
+        # Release a seat: R1 or R2
+        if choice.upper().startswith("R"):
             try:
                 seat_idx = int(choice[1:]) - 1
                 if 0 <= seat_idx < len(team.driver_ids):
-                    released_id = team.driver_ids.pop(seat_idx)
+                    released_id = team.driver_ids[seat_idx]
                     released = drivers.get(released_id)
                     if released:
-                        released.team_id = None
-                        console.print(f"[yellow]{released.name} released to free agency.[/yellow]")
+                        confirm = Prompt.ask(
+                            f"Release [bold]{released.name}[/bold]? Cannot be undone. (y/n)",
+                            choices=["y", "n"], default="n",
+                        )
+                        if confirm == "y":
+                            team.driver_ids.pop(seat_idx)
+                            released.team_id = None
+                            console.print(f"[yellow]{released.name} released to free agency.[/yellow]")
+                        else:
+                            console.print("[dim]Cancelled.[/dim]")
                 else:
                     console.print("[red]Invalid seat number.[/red]")
             except ValueError:
-                console.print("[red]Invalid command.[/red]")
+                console.print("[red]Enter R1 or R2 to release a seat.[/red]")
 
-        elif choice.startswith("S") and len(choice) > 1:
+        # Sign a candidate by number
+        elif choice.isdigit():
             if len(team.driver_ids) >= 2:
-                console.print("[yellow]Both seats are already filled. Release a driver first.[/yellow]")
+                console.print("[yellow]Both seats are filled. Release a driver first (R1 or R2).[/yellow]")
                 continue
-            try:
-                cand_idx = int(choice[1:]) - 1
-                if 0 <= cand_idx < len(all_candidates):
-                    new_d = all_candidates[cand_idx]
-                    # If it's a rookie not yet in drivers dict, add them
-                    if new_d not in free_agents:
-                        drivers[new_d.id] = new_d
-                        existing_ids.add(new_d.id)
-                    new_d.team_id = team.id
-                    team.driver_ids.append(new_d.id)
-                    console.print(f"[green]✓ {new_d.name} signed![/green]")
-                else:
-                    console.print("[red]Invalid candidate number.[/red]")
-            except ValueError:
-                console.print("[red]Invalid command.[/red]")
+            cand_idx = int(choice) - 1
+            if 0 <= cand_idx < len(all_candidates):
+                new_d = all_candidates[cand_idx]
+                if new_d not in free_agents:
+                    drivers[new_d.id] = new_d
+                    existing_ids.add(new_d.id)
+                new_d.team_id = team.id
+                team.driver_ids.append(new_d.id)
+                console.print(f"[green]✓ {new_d.name} signed! (€{new_d.salary}M/season)[/green]")
+            else:
+                console.print("[red]Invalid candidate number.[/red]")
         else:
-            console.print("[red]Unknown command. Use R<seat>, S<#>, or 0.[/red]")
+            console.print("[red]Enter a candidate number to sign, R1/R2 to release, or 0 to finish.[/red]")

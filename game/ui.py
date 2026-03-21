@@ -17,8 +17,8 @@ from rich.text import Text
 from models.circuit import Circuit
 from models.driver import Driver
 from models.team import Team
-from engine.tyres import TYRE_COMPOUNDS, TyreStint, RaceStrategy, race_laps, adjusted_tyre_life, suggest_strategies
-from engine.qualifying import QualiResult, simulate_qualifying
+from engine.tyres import TYRE_COMPOUNDS, TyreStint, RaceStrategy, race_laps, adjusted_tyre_life, suggest_strategies, _tyre_score
+from engine.qualifying import QualiResult, KnockoutQualiResult, simulate_qualifying, simulate_knockout_qualifying
 from engine.race import (
     RaceEntry, RaceResult, RaceReport, PitStop, DriverLapRecord,
     simulate_race,
@@ -148,7 +148,7 @@ def show_race_header(
     console.print(
         Panel(
             f"[dim]Race {race_num} of {total}[/dim]\n"
-            f"[bold white]{circuit.name}[/bold white]  {circuit.flag}\n"
+            f"[bold white]{circuit.name}[/bold white]\n"
             f"[dim]{circuit.country}  •  {circuit.length_km}km  "
             f"•  {circuit.corners} corners  "
             f"•  Tire wear {tire_icon} {circuit.tire_wear}"
@@ -172,7 +172,7 @@ def show_race_results(
         show_lines=False,
     )
     table.add_column("Pos", width=4, justify="center")
-    table.add_column("±", width=5, justify="right")
+    table.add_column("Grid±", width=6, justify="right")
     table.add_column("Driver", min_width=20)
     table.add_column("Team", min_width=18)
     table.add_column("Gap / Status", min_width=22)
@@ -192,6 +192,22 @@ def show_race_results(
         elif r.position == 1:
             pos_str = "[bold yellow]1[/bold yellow]"
             gap_str = "[green]WINNER[/green]"
+            if r.grid_position > 0:
+                delta = r.grid_position - r.position
+                delta_str = f"[green]+{delta}[/green]" if delta > 0 else ("[dim]—[/dim]" if delta == 0 else f"[red]{delta}[/red]")
+            else:
+                delta_str = ""
+        elif r.position == 2:
+            pos_str = "[bold white]2[/bold white]"
+            gap_str = f"+{r.time_gap:.3f}s"
+            if r.grid_position > 0:
+                delta = r.grid_position - r.position
+                delta_str = f"[green]+{delta}[/green]" if delta > 0 else ("[dim]—[/dim]" if delta == 0 else f"[red]{delta}[/red]")
+            else:
+                delta_str = ""
+        elif r.position == 3:
+            pos_str = "[bold orange3]3[/bold orange3]"
+            gap_str = f"+{r.time_gap:.3f}s"
             if r.grid_position > 0:
                 delta = r.grid_position - r.position
                 delta_str = f"[green]+{delta}[/green]" if delta > 0 else ("[dim]—[/dim]" if delta == 0 else f"[red]{delta}[/red]")
@@ -276,6 +292,11 @@ def show_pit_stats(
         table.add_row(pos_str, name_str, str(len(stops)), strategy_str, stop_detail, best_str)
 
     console.print(table)
+    parts = "  ".join(
+        f"[{info['color']}]{info['symbol']}[/{info['color']}][dim]={name.capitalize()}[/dim]"
+        for name, info in TYRE_COMPOUNDS.items()
+    )
+    console.print(f"[dim]  Compounds:[/dim]  {parts}")
 
 
 # ─── Lap analysis ─────────────────────────────────────────────────────────────
@@ -454,6 +475,7 @@ def show_driver_development(
     drivers: Dict[str, Driver],
     gains: Dict[str, Dict[str, int]],
     xp_gains: Dict[str, Dict[str, float]],
+    report=None,
 ) -> None:
     panels = []
     for did in team.driver_ids:
@@ -463,29 +485,89 @@ def show_driver_development(
         driver_gains = gains.get(did, {})
         driver_xp_gains = xp_gains.get(did, {})
 
+        # Extract performance context
+        overtakes = defenses = 0
+        wet_fraction = 0.0
+        has_fl = False
+        if report is not None:
+            overtakes   = report.overtakes_made.get(did, 0)
+            defenses    = report.defenses_made.get(did, 0)
+            driver_laps = report.lap_data.get(did, [])
+            total_laps  = len(driver_laps)
+            if total_laps > 0:
+                rain_laps    = sum(1 for r in driver_laps if r.compound in ("intermediate", "wet"))
+                wet_fraction = rain_laps / total_laps
+            result  = next((r for r in report.results if r.driver.id == did), None)
+            has_fl  = bool(result and result.fastest_lap)
+
+        # Map each stat to its bonus colour (empty string = no performance bonus this race)
+        _bonus_color: Dict[str, str] = {}
+        if overtakes > 0:
+            _bonus_color["overtaking"] = "cyan"
+            _bonus_color["aggression"] = "cyan"
+        if defenses > 0:
+            _bonus_color["defending"] = "blue"
+        if wet_fraction > 0:
+            _bonus_color["wet_weather"] = "green"
+        if has_fl:
+            _bonus_color["pace"] = "magenta"
+            _bonus_color["qualifying_pace"] = "magenta"
+
+        # Sort: stats with a performance bonus this race float to the top
+        ordered_stats = sorted(
+            _DEV_STATS,
+            key=lambda x: (0 if x[0] in _bonus_color else 1),
+        )
+
         table = Table(box=None, show_header=False, padding=(0, 1))
         table.add_column("Stat", min_width=12)
         table.add_column("Val", justify="right", width=4)
-        table.add_column("XP Progress", min_width=18)
-        table.add_column("Gained", width=6, justify="right")
+        table.add_column("XP Pool", min_width=18)
+        table.add_column("Race XP", width=7, justify="right")
         table.add_column("", width=4)
 
-        for attr, label in _DEV_STATS:
-            val = getattr(driver, attr)
-            xp = driver.xp.get(attr, 0.0)
+        # Performance summary row at the top of the table
+        perf_parts: List[str] = []
+        if overtakes > 0:
+            perf_parts.append(f"[cyan]{overtakes} overtake{'s' if overtakes > 1 else ''}[/cyan]")
+        if defenses > 0:
+            perf_parts.append(f"[blue]{defenses} defense{'s' if defenses > 1 else ''}[/blue]")
+        if wet_fraction > 0:
+            pct = int(wet_fraction * 100)
+            perf_parts.append(f"[green]{pct}% wet laps[/green]")
+        if has_fl:
+            perf_parts.append("[magenta]Fastest Lap[/magenta]")
+        if perf_parts:
+            table.add_row(
+                "[dim]Bonuses:[/dim]",
+                "",
+                "  ".join(perf_parts),
+                "", "",
+                end_section=True,
+            )
+
+        for attr, label in ordered_stats:
+            val   = getattr(driver, attr)
+            xp    = driver.xp.get(attr, 0.0)
             delta = driver_gains.get(attr, 0)
             gained = driver_xp_gains.get(attr, 0.0)
 
-            gained_str = f"[dim]+{gained * 100:.1f}%[/dim]" if gained > 0 else ""
+            bonus_col = _bonus_color.get(attr, "")
+            if bonus_col:
+                gained_str = f"[bold {bonus_col}]+{gained * 100:.1f}%[/bold {bonus_col}]"
+            elif gained > 0:
+                gained_str = f"[dim]+{gained * 100:.1f}%[/dim]"
+            else:
+                gained_str = ""
 
             if delta > 0:
-                badge = f"[bold green]+{delta}[/bold green]"
+                badge   = f"[bold green]+{delta}[/bold green]"
                 val_str = f"[bold green]{val}[/bold green]"
             elif delta < 0:
-                badge = f"[bold red]{delta}[/bold red]"
+                badge   = f"[bold red]{delta}[/bold red]"
                 val_str = f"[bold red]{val}[/bold red]"
             else:
-                badge = ""
+                badge   = ""
                 val_str = str(val)
 
             table.add_row(label, val_str, _xp_bar(xp), gained_str, badge)
@@ -494,7 +576,7 @@ def show_driver_development(
 
     console.print()
     console.print(Panel(
-        Columns(panels) if panels else "[dim]—[/dim]",
+        Columns(panels, expand=True) if panels else "[dim]—[/dim]",
         title="[bold]DRIVER DEVELOPMENT[/bold]",
         border_style="cyan",
         padding=(0, 1),
@@ -512,8 +594,19 @@ def show_standings(
     top_n: int = 10,
     season_year: int = 2026,
 ) -> None:
-    sorted_drivers = sorted(driver_pts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+    all_sorted_drivers = sorted(driver_pts.items(), key=lambda x: x[1], reverse=True)
+    sorted_drivers = all_sorted_drivers[:top_n]
     sorted_teams = sorted(team_pts.items(), key=lambda x: x[1], reverse=True)
+
+    # Find player driver IDs not already in top_n
+    player_team = teams.get(player_team_id)
+    player_driver_ids = set(player_team.driver_ids) if player_team else set()
+    shown_ids = {did for did, _ in sorted_drivers}
+    extra_player_rows = [
+        (pos, did, pts)
+        for pos, (did, pts) in enumerate(all_sorted_drivers, 1)
+        if did in player_driver_ids and did not in shown_ids
+    ]
 
     d_table = Table(title=f"DRIVERS' CHAMPIONSHIP — Season {season_year}", box=box.SIMPLE_HEAD, show_edge=False)
     d_table.add_column("Pos", width=4, justify="center")
@@ -528,6 +621,14 @@ def show_standings(
         team_str = f"[{t.color}]{t.short_name}[/{t.color}]" if t else "—"
         name_str = f"[bold]{d.name}[/bold]" if is_player else (d.name if d else did)
         d_table.add_row(str(i), name_str, team_str, str(pts))
+
+    if extra_player_rows:
+        d_table.add_row("[dim]…[/dim]", "", "", "")
+        for pos, did, pts in extra_player_rows:
+            d = drivers.get(did)
+            t = teams.get(d.team_id) if d and d.team_id else None
+            team_str = f"[{t.color}]{t.short_name}[/{t.color}]" if t else "—"
+            d_table.add_row(f"[bold]{pos}[/bold]", f"[bold]{d.name}[/bold]" if d else did, team_str, str(pts))
 
     c_table = Table(title=f"CONSTRUCTORS' CHAMPIONSHIP — Season {season_year}", box=box.SIMPLE_HEAD, show_edge=False)
     c_table.add_column("Pos", width=4, justify="center")
@@ -553,6 +654,7 @@ def show_race_events(events: List[str], max_events: int = 12) -> None:
     if not events:
         return
 
+    total_events = len(events)
     priority = [e for e in events if "retires" in e or "overtakes" in e]
     pits = [e for e in events if "pits" in e]
 
@@ -571,6 +673,9 @@ def show_race_events(events: List[str], max_events: int = 12) -> None:
             lines.append(f"[cyan]{e}[/cyan]")
         else:
             lines.append(f"[dim]{e}[/dim]")
+
+    if total_events > max_events:
+        lines.append(f"\n[dim]Showing {len(shown)} of {total_events} events[/dim]")
 
     console.print(Panel(
         "\n".join(lines),
@@ -619,6 +724,114 @@ def show_quali_results(
         table.add_row(pos_str, name_str, team_str, gap_str)
 
     console.print(table)
+
+
+def show_knockout_quali_session(
+    session: str,
+    results: List[QualiResult],
+    player_team_id: str,
+    circuit: Circuit,
+    cutoff: Optional[int] = None,
+    advancement_label: Optional[str] = None,
+) -> None:
+    console.print()
+    table = Table(
+        title=f"{session} — {circuit.name}",
+        box=box.ROUNDED,
+        header_style="bold white",
+        show_lines=False,
+    )
+    table.add_column("Pos", width=5, justify="center")
+    table.add_column("Driver", min_width=20)
+    table.add_column("Team", min_width=18)
+    table.add_column("Gap to Fastest", min_width=14, justify="right")
+    table.add_column("Status", width=12, justify="center")
+
+    for r in results:
+        is_player = r.team_id == player_team_id
+        eliminated = cutoff is not None and r.position > cutoff
+        prefix = "[bold]▶ [/bold]" if is_player else "  "
+
+        if eliminated:
+            name_str = f"[dim]{prefix}{r.driver.name}[/dim]"
+            team_str = f"[dim][{r.team_color}]{r.team_name}[/{r.team_color}][/dim]"
+            gap_str = f"[dim]+{r.lap_time_delta:.3f}s[/dim]"
+            status_str = "[bold red]OUT[/bold red]"
+        elif r.position == 1:
+            name_str = f"{prefix}{r.driver.name}"
+            team_str = f"[{r.team_color}]{r.team_name}[/{r.team_color}]"
+            gap_str = "[bold cyan]POLE[/bold cyan]"
+            status_str = ""
+        elif r.position <= 3:
+            name_str = f"{prefix}{r.driver.name}"
+            team_str = f"[{r.team_color}]{r.team_name}[/{r.team_color}]"
+            gap_str = f"[bold green]+{r.lap_time_delta:.3f}s[/bold green]"
+            status_str = ""
+        else:
+            name_str = f"{prefix}{r.driver.name}"
+            team_str = f"[{r.team_color}]{r.team_name}[/{r.team_color}]"
+            gap_str = f"+{r.lap_time_delta:.3f}s"
+            status_str = ""
+
+        # Show advancement label at the cutoff boundary
+        if cutoff is not None and r.position == cutoff and advancement_label:
+            status_str = f"[dim]{advancement_label}[/dim]"
+
+        pos_str: str
+        if eliminated:
+            pos_str = f"[dim]P{r.position}[/dim]"
+        elif r.position == 1:
+            pos_str = "[bold yellow]P1[/bold yellow]"
+        elif r.position <= 3:
+            pos_str = f"[bold green]P{r.position}[/bold green]"
+        else:
+            pos_str = f"P{r.position}"
+
+        table.add_row(pos_str, name_str, team_str, gap_str, status_str)
+
+    console.print(table)
+
+
+def run_knockout_qualifying_with_animation(
+    entries: List[RaceEntry],
+    circuit: Circuit,
+    weather: str,
+    player_team_id: str,
+) -> List[QualiResult]:
+    """Simulate knockout qualifying, animate each session, return final_grid."""
+    knockout = simulate_knockout_qualifying(entries, circuit, weather)
+
+    def _progress_bar(description: str, steps: int, step_time: float) -> None:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(description, total=steps)
+            for _ in range(steps):
+                time.sleep(step_time)
+                progress.advance(task, 1)
+
+    # Q1
+    console.print(Panel("[bold cyan]Q1 — QUALIFYING  (all 20 drivers)[/bold cyan]", border_style="cyan", padding=(0, 2)))
+    _progress_bar(f"[cyan]Q1 — {circuit.name}...[/cyan]", 10, 0.06)
+    show_knockout_quali_session("Q1", knockout.q1, player_team_id, circuit, cutoff=15, advancement_label="→ Q2")
+    console.input("\n[dim]Press Enter for Q2…[/dim]")
+
+    # Q2
+    console.print(Panel("[bold cyan]Q2 — QUALIFYING  (top 15 advance)[/bold cyan]", border_style="cyan", padding=(0, 2)))
+    _progress_bar(f"[cyan]Q2 — {circuit.name}...[/cyan]", 10, 0.06)
+    show_knockout_quali_session("Q2", knockout.q2, player_team_id, circuit, cutoff=10, advancement_label="→ Q3")
+    console.input("\n[dim]Press Enter for Q3…[/dim]")
+
+    # Q3
+    console.print(Panel("[bold yellow]Q3 — SHOOTOUT  (top 10 — final grid P1–P10)[/bold yellow]", border_style="yellow", padding=(0, 2)))
+    _progress_bar(f"[yellow]Q3 — {circuit.name}...[/yellow]", 10, 0.08)
+    show_knockout_quali_session("Q3", knockout.q3, player_team_id, circuit, cutoff=None)
+
+    return knockout.final_grid
 
 
 # ─── Strategy UI ──────────────────────────────────────────────────────────────
@@ -699,49 +912,49 @@ def _custom_strategy(weather: str, total_laps: int, circuit, car, driver) -> Rac
         return RaceStrategy(stints=stints, label="Custom")
 
 
-def show_strategy_menu(
+def _show_strategy_panel(
     circuit: Circuit,
     weather: str,
-    player_team: Team,
-    drivers: Dict[str, Driver],
-) -> Dict[str, RaceStrategy]:
-    """
-    Display the tyre strategy selection screen and return a dict mapping each
-    player driver ID to their chosen RaceStrategy.
-    """
-    player_drivers = [drivers[did] for did in player_team.driver_ids if did in drivers]
-    ref_driver = player_drivers[0] if player_drivers else None
-    car = player_team.car
+    car,
+    driver,
+    driver_label: str,
+) -> RaceStrategy:
+    """Display strategy options for a single driver and return their chosen strategy."""
     total = race_laps(circuit)
     is_wet = weather == "wet"
 
-    presets = suggest_strategies(circuit, weather, car, ref_driver) if ref_driver else []
-    recommended_idx = 0 if is_wet else 1   # Intermediate Only / Balanced
+    presets = suggest_strategies(circuit, weather, car, driver)
+
+    # Compute recommended index using tyre score
+    if is_wet:
+        recommended_idx = 0
+    else:
+        scores = [_tyre_score(p, circuit, weather, car, driver) for p in presets]
+        recommended_idx = scores.index(max(scores))
 
     lines: List[str] = []
     weather_tag = "[blue]RAIN[/blue]" if is_wet else "[yellow]DRY[/yellow]"
-    lines.append(f"[bold]TYRE STRATEGY[/bold] — {circuit.name}")
+    lines.append(f"[bold]TYRE STRATEGY[/bold] — {circuit.name}  [dim]({driver_label})[/dim]")
     lines.append(
         f"Weather: {weather_tag}  |  Tyre Wear: [bold]{circuit.tire_wear.upper()}[/bold]"
         f"  |  Race Distance: [bold]{total} laps[/bold]"
     )
     lines.append("")
 
-    if ref_driver:
-        lines.append("Compound life (adjusted for your car):")
-        if is_wet:
-            inter_life = adjusted_tyre_life("intermediate", circuit, car, ref_driver)
-            wet_life   = adjusted_tyre_life("wet",          circuit, car, ref_driver)
-            lines.append(f"  [green]I[/green] Intermediate — ~{inter_life} laps")
-            lines.append(f"  [blue]W[/blue] Wet          — ~{wet_life} laps")
-        else:
-            hard_life = adjusted_tyre_life("hard",   circuit, car, ref_driver)
-            med_life  = adjusted_tyre_life("medium", circuit, car, ref_driver)
-            soft_life = adjusted_tyre_life("soft",   circuit, car, ref_driver)
-            lines.append(f"  [white]H[/white] Hard   — ~{hard_life} laps")
-            lines.append(f"  [yellow]M[/yellow] Medium — ~{med_life} laps")
-            lines.append(f"  [red]S[/red] Soft   — ~{soft_life} laps")
-        lines.append("")
+    lines.append("Compound life (adjusted for this driver):")
+    if is_wet:
+        inter_life = adjusted_tyre_life("intermediate", circuit, car, driver)
+        wet_life   = adjusted_tyre_life("wet",          circuit, car, driver)
+        lines.append(f"  [green]I[/green] Intermediate — ~{inter_life} laps")
+        lines.append(f"  [blue]W[/blue] Wet          — ~{wet_life} laps")
+    else:
+        hard_life = adjusted_tyre_life("hard",   circuit, car, driver)
+        med_life  = adjusted_tyre_life("medium", circuit, car, driver)
+        soft_life = adjusted_tyre_life("soft",   circuit, car, driver)
+        lines.append(f"  [white]H[/white] Hard   — ~{hard_life} laps")
+        lines.append(f"  [yellow]M[/yellow] Medium — ~{med_life} laps")
+        lines.append(f"  [red]S[/red] Soft   — ~{soft_life} laps")
+    lines.append("")
 
     lines.append("Preset strategies:")
     for i, preset in enumerate(presets):
@@ -759,11 +972,29 @@ def show_strategy_menu(
     choice_idx = int(choice) - 1
 
     if choice_idx < len(presets):
-        chosen = presets[choice_idx]
-    else:
-        chosen = _custom_strategy(weather, total, circuit, car, ref_driver)
+        return presets[choice_idx]
+    return _custom_strategy(weather, total, circuit, car, driver)
 
-    return {d.id: chosen for d in player_drivers}
+
+def show_strategy_menu(
+    circuit: Circuit,
+    weather: str,
+    player_team: Team,
+    drivers: Dict[str, Driver],
+) -> Dict[str, RaceStrategy]:
+    """
+    Display the tyre strategy selection screen and return a dict mapping each
+    player driver ID to their chosen RaceStrategy.
+    """
+    player_drivers = [drivers[did] for did in player_team.driver_ids if did in drivers]
+    car = player_team.car
+    result: Dict[str, RaceStrategy] = {}
+
+    for driver in player_drivers:
+        strategy = _show_strategy_panel(circuit, weather, car, driver, driver.name)
+        result[driver.id] = strategy
+
+    return result
 
 
 def show_strategy_summary(
@@ -810,6 +1041,8 @@ def run_race_with_animation(
     grid: Optional[List[str]] = None,
     strategies: Optional[Dict[str, RaceStrategy]] = None,
 ) -> RaceReport:
+    # Simulate first so results are ready; then animate
+    report = simulate_race(entries, circuit, weather, grid=grid, strategies=strategies)
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -823,6 +1056,4 @@ def run_race_with_animation(
         for _ in range(20):
             time.sleep(0.08)
             progress.advance(task, 1)
-        report = simulate_race(entries, circuit, weather, grid=grid, strategies=strategies)
-
     return report

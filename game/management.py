@@ -12,7 +12,7 @@ from rich.table import Table
 from models.car import UPGRADE_COSTS, UPGRADE_AMOUNT, upgrade_cost
 from models.driver import Driver
 from models.team import Team
-from .ui import show_team_overview, show_standings
+from .ui import show_team_overview, show_standings, stat_bar
 
 console = Console()
 
@@ -94,16 +94,13 @@ def driver_market_menu(
         fa_table.add_column("#", width=3)
         fa_table.add_column("Name", min_width=18)
         fa_table.add_column("OVR", justify="center", width=5)
-        fa_table.add_column("Pace", justify="center", width=5)
-        fa_table.add_column("QPce", justify="center", width=5)
-        fa_table.add_column("Con", justify="center", width=5)
-        fa_table.add_column("Otk", justify="center", width=5)
-        fa_table.add_column("Def", justify="center", width=5)
-        fa_table.add_column("CC", justify="center", width=5)
-        fa_table.add_column("Wet", justify="center", width=5)
-        fa_table.add_column("Tire", justify="center", width=5)
-        fa_table.add_column("Men", justify="center", width=5)
-        fa_table.add_column("Exp", justify="center", width=5)
+        fa_table.add_column("Pace", min_width=16)
+        fa_table.add_column("Q.Pace", min_width=16)
+        fa_table.add_column("Consistency", min_width=16)
+        fa_table.add_column("Overtaking", min_width=16)
+        fa_table.add_column("Defending", min_width=16)
+        fa_table.add_column("Wet", min_width=16)
+        fa_table.add_column("Tire Mgmt", min_width=16)
         fa_table.add_column("Age", justify="center", width=5)
         fa_table.add_column("POT", justify="center", width=5)
         fa_table.add_column("Hire Cost", justify="right", width=10)
@@ -113,10 +110,9 @@ def driver_market_menu(
             color = "green" if team.budget >= hire_cost else "red"
             fa_table.add_row(
                 str(i), d.name, str(d.overall),
-                str(d.pace), str(d.qualifying_pace),
-                str(d.consistency), str(d.overtaking), str(d.defending), str(d.car_control),
-                str(d.wet_weather), str(d.tire_management),
-                str(d.mental), str(d.experience),
+                stat_bar(d.pace), stat_bar(d.qualifying_pace),
+                stat_bar(d.consistency), stat_bar(d.overtaking), stat_bar(d.defending),
+                stat_bar(d.wet_weather), stat_bar(d.tire_management),
                 str(d.age), str(d.potential),
                 f"[{color}]€{hire_cost}M[/{color}]",
             )
@@ -127,52 +123,48 @@ def driver_market_menu(
         for slot, did in enumerate(team.driver_ids, 1):
             d = drivers.get(did)
             if d:
-                console.print(f"  Seat {slot}: {d.name}  (OVR {d.overall}, €{d.salary}M/season)")
+                console.print(f"  [bold]{slot}.[/bold] {d.name}  (OVR {d.overall}, €{d.salary}M/season)")
 
         console.print(f"\n[dim]Budget: €{team.budget:.1f}M[/dim]")
-        console.print(
-            "\n[dim]To hire: enter [bold]agent#-seat#[/bold] (e.g. '2-1' hires agent 2 into seat 1)"
-            "  |  0 = back[/dim]"
-        )
+        console.print("\n[dim]0 = back  |  Enter agent number to hire[/dim]")
 
-        choice = Prompt.ask("Action", default="0")
+        agent_choices = [str(i) for i in range(len(free_agents) + 1)]
+        choice = Prompt.ask("Pick a free agent (number)", choices=agent_choices, default="0")
         if choice == "0":
             break
 
-        try:
-            parts = choice.split("-")
-            if len(parts) != 2:
-                raise ValueError
-            agent_idx = int(parts[0]) - 1
-            seat_idx = int(parts[1]) - 1
+        agent_idx = int(choice) - 1
+        new_driver = free_agents[agent_idx]
+        hire_cost = round(new_driver.salary * races_remaining / total_races, 1)
 
-            if not (0 <= agent_idx < len(free_agents)):
-                raise ValueError("Invalid agent")
-            if not (0 <= seat_idx < len(team.driver_ids)):
-                raise ValueError("Invalid seat")
+        if team.budget < hire_cost:
+            console.print(f"[red]Not enough budget. Need €{hire_cost}M, have €{team.budget:.1f}M[/red]")
+            continue
 
-            new_driver = free_agents[agent_idx]
-            hire_cost = round(new_driver.salary * races_remaining / total_races, 1)
+        seat_choices = [str(i) for i in range(1, len(team.driver_ids) + 1)]
+        seat_str = Prompt.ask("Replace which driver? (1/2)", choices=seat_choices)
+        seat_idx = int(seat_str) - 1
 
-            if team.budget < hire_cost:
-                console.print(f"[red]Not enough budget. Need €{hire_cost}M[/red]")
-                continue
-
-            old_id = team.driver_ids[seat_idx]
-            old_driver = drivers.get(old_id)
-            if old_driver:
-                old_driver.team_id = None
-                console.print(f"[yellow]{old_driver.name} released.[/yellow]")
-
-            new_driver.team_id = team.id
-            team.driver_ids[seat_idx] = new_driver.id
-            team.budget -= hire_cost
-            console.print(
-                f"[green]✓ {new_driver.name} signed! Budget remaining: €{team.budget:.1f}M[/green]"
+        old_id = team.driver_ids[seat_idx]
+        old_driver = drivers.get(old_id)
+        if old_driver:
+            savings = old_driver.salary
+            confirm = Prompt.ask(
+                f"Release [bold]{old_driver.name}[/bold] (€{savings}M saved)? This cannot be undone. (y/n)",
+                choices=["y", "n"], default="n",
             )
+            if confirm != "y":
+                console.print("[dim]Cancelled.[/dim]")
+                continue
+            old_driver.team_id = None
+            console.print(f"[yellow]{old_driver.name} released.[/yellow]")
 
-        except (ValueError, IndexError):
-            console.print("[red]Invalid format. Try '2-1' to put agent 2 in seat 1.[/red]")
+        new_driver.team_id = team.id
+        team.driver_ids[seat_idx] = new_driver.id
+        team.budget -= hire_cost
+        console.print(
+            f"[green]✓ {new_driver.name} signed! Budget remaining: €{team.budget:.1f}M[/green]"
+        )
 
 
 def management_menu(

@@ -17,7 +17,7 @@
     },
     {
       "id": "japan", "name": "Japanese Grand Prix", "country": "Japan", "flag": "🇯🇵",
-      "length_km": 5.807, "corners": 18, "overtaking_difficulty": 60, "weather_chance": 35, "tire_wear": "high",
+      "length_km": 5.807, "corners": 18, "overtaking_difficulty": 73, "weather_chance": 35, "tire_wear": "high",
       "pit_lane_loss": 21
     },
     {
@@ -63,7 +63,7 @@
     {
       "id": "belgium", "name": "Belgian Grand Prix", "country": "Belgium", "flag": "🇧🇪",
       "length_km": 7.004, "corners": 20, "overtaking_difficulty": 35, "weather_chance": 55, "tire_wear": "medium",
-      "pit_lane_loss": 19
+      "pit_lane_loss": 22
     },
     {
       "id": "netherlands", "name": "Dutch Grand Prix", "country": "Netherlands", "flag": "🇳🇱",

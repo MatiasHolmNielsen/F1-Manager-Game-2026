@@ -15,7 +15,7 @@ from .ui import (
     show_race_header, show_race_results, show_race_events, show_pit_stats,
     show_lap_analysis, show_driver_development, show_standings,
     show_quali_results, show_strategy_menu, show_strategy_summary,
-    run_qualifying_with_animation, run_race_with_animation,
+    run_knockout_qualifying_with_animation, run_race_with_animation,
 )
 from .management import management_menu
 from .finances import _apply_race_finances
@@ -137,10 +137,8 @@ def main() -> None:
             # ── Qualifying ──────────────────────────────────────────────
             quali_weather = "wet" if random.random() * 100 < circuit.weather_chance * 0.5 else "dry"
             show_race_header(circuit, race_num, total_races, quali_weather)
-            console.print(Panel("[bold cyan]QUALIFYING SESSION[/bold cyan]", border_style="cyan", padding=(0, 2)))
-            quali_results = run_qualifying_with_animation(entries, circuit, quali_weather)
-            show_quali_results(quali_results, player_team_id, circuit)
-            grid = [qr.driver.id for qr in quali_results]
+            final_grid = run_knockout_qualifying_with_animation(entries, circuit, quali_weather, player_team_id)
+            grid = [qr.driver.id for qr in final_grid]
             console.input("\n[dim]Press Enter for strategy selection…[/dim]")
 
             # ── Race ────────────────────────────────────────────────────
@@ -163,7 +161,6 @@ def main() -> None:
             console.clear()
             show_race_header(circuit, race_num, total_races, weather)
             show_race_results(results, player_team_id, circuit, report.fastest_lap_time, report.driver_fastest_laps)
-            show_race_events(report.events)
             console.input("\n[dim]Press Enter for pit stats…[/dim]")
 
             # ── View 1b: Pit Stats ────────────────────────────────────
@@ -171,27 +168,31 @@ def main() -> None:
             show_race_header(circuit, race_num, total_races, weather)
             show_pit_stats(report.pit_stops, results, circuit)
             console.print()
-            console.print("[dim]Press Enter for finances  •  [bold]L[/bold] = Lap analysis[/dim]")
-            pit_choice = Prompt.ask("", default="")
-            if pit_choice.strip().lower() == "l":
-                while True:
-                    console.clear()
-                    show_race_header(circuit, race_num, total_races, weather)
-                    show_lap_analysis(player_team, drivers, report, circuit)
-                    break
+            console.print("[dim]Enter = continue  •  [bold]L[/bold] = Lap analysis  •  [bold]Q[/bold] = Skip to standings[/dim]")
+            pit_choice = Prompt.ask("", default="").strip().lower()
+            if pit_choice == "l":
+                console.clear()
+                show_race_header(circuit, race_num, total_races, weather)
+                show_lap_analysis(player_team, drivers, report, circuit)
 
-            # ── View 2: Finances ─────────────────────────────────────
-            console.clear()
-            show_race_header(circuit, race_num, total_races, weather)
-            _apply_race_finances(player_team, results, player_team_id)
-            console.input("\n[dim]Press Enter for driver development…[/dim]")
+            quick = pit_choice == "q"
 
-            # ── View 3: Driver Development ───────────────────────────
-            console.clear()
-            show_race_header(circuit, race_num, total_races, weather)
-            gains, xp_gains = apply_development(results, drivers, grid=grid)
-            show_driver_development(player_team, drivers, gains, xp_gains)
-            console.input("\n[dim]Press Enter for championship standings…[/dim]")
+            if not quick:
+                # ── View 2: Finances ──────────────────────────────────
+                console.clear()
+                show_race_header(circuit, race_num, total_races, weather)
+                _apply_race_finances(player_team, results, player_team_id)
+                console.input("\n[dim]Press Enter for driver development…[/dim]")
+
+                # ── View 3: Driver Development ────────────────────────
+                console.clear()
+                show_race_header(circuit, race_num, total_races, weather)
+                gains, xp_gains = apply_development(results, drivers, grid=grid, report=report)
+                show_driver_development(player_team, drivers, gains, xp_gains, report=report)
+                console.input("\n[dim]Press Enter for championship standings…[/dim]")
+            else:
+                _apply_race_finances(player_team, results, player_team_id)
+                gains, xp_gains = apply_development(results, drivers, grid=grid, report=report)
 
             # ── View 4: Championship ─────────────────────────────────
             console.clear()

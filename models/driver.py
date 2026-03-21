@@ -47,11 +47,11 @@ class Driver:
 
     @property
     def age_group(self) -> str:
-        if self.age < 23:
+        if self.age < 25:
             return "prospect"
-        elif self.age < 33:
+        elif self.age < 35:
             return "prime"
-        elif self.age < 38:
+        elif self.age < 40:
             return "veteran"
         else:
             return "legend"

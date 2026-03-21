@@ -9,20 +9,20 @@ if TYPE_CHECKING:
 
 
 TYRE_COMPOUNDS = {
-    "hard":         {"pace_bonus": -2.0, "color": "white",  "symbol": "H", "rain": False},
+    "hard":         {"pace_bonus": -0.5, "color": "white",  "symbol": "H", "rain": False},
     "medium":       {"pace_bonus":  0.0, "color": "yellow", "symbol": "M", "rain": False},
-    "soft":         {"pace_bonus":  3.0, "color": "red",    "symbol": "S", "rain": False},
+    "soft":         {"pace_bonus":  0.8, "color": "red",    "symbol": "S", "rain": False},
     "intermediate": {"pace_bonus":  1.5, "color": "green",  "symbol": "I", "rain": True},
     "wet":          {"pace_bonus":  3.0, "color": "blue",   "symbol": "W", "rain": True},
 }
 
 # Per-lap pace delta (seconds): negative = faster than medium baseline
 COMPOUND_PACE_DELTA = {
-    "soft":         -1.5,
+    "soft":         -0.5,
     "medium":        0.0,
-    "hard":          1.0,
-    "intermediate":  0.5,
-    "wet":           1.5,
+    "hard":          0.3,
+    "intermediate":  0.2,
+    "wet":           0.8,
 }
 
 # Base tyre life in laps per compound per circuit wear level
@@ -103,7 +103,7 @@ def _tyre_score(strategy: RaceStrategy, circuit, weather: str, car, driver) -> f
 
     # Pit stop time penalty (each stop after the first stint)
     num_stops = len(strategy.stints) - 1
-    pit_time = 2.1 + (90 - car.pit_crew) * 0.025  # 2.1s–2.7s range
+    pit_time = 2.0 + (90 - car.pit_crew) * 0.05  # 2.0s–3.5s range
     score_penalty_per_stop = pit_time / 1.2
     total_pit_penalty = num_stops * score_penalty_per_stop
 

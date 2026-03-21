@@ -4,7 +4,7 @@
       "id": "red_bull", "name": "Oracle Red Bull Racing", "short_name": "Red Bull", "color": "blue",
       "budget": 120,
       "car": { "engine": 90, "aerodynamics": 92, "mechanical_grip": 89, "reliability": 86, "tire_deg": 88, "braking": 90, "pit_crew": 88 },
-      "driver_ids": ["VER", "LAW"]
+      "driver_ids": ["VER", "HAD"]
     },
     {
       "id": "ferrari", "name": "Scuderia Ferrari", "short_name": "Ferrari", "color": "red",
@@ -34,7 +34,7 @@
       "id": "alpine", "name": "BWT Alpine F1 Team", "short_name": "Alpine", "color": "cyan",
       "budget": 90,
       "car": { "engine": 82, "aerodynamics": 83, "mechanical_grip": 80, "reliability": 82, "tire_deg": 82, "braking": 81, "pit_crew": 72 },
-      "driver_ids": ["GAS", "DOO"]
+      "driver_ids": ["GAS", "COL"]
     },
     {
       "id": "williams", "name": "Williams Racing", "short_name": "Williams", "color": "bright_blue",
@@ -58,7 +58,13 @@
       "id": "racing_bulls", "name": "Visa Cash App Racing Bulls", "short_name": "Racing Bulls", "color": "magenta",
       "budget": 85,
       "car": { "engine": 83, "aerodynamics": 84, "mechanical_grip": 82, "reliability": 82, "tire_deg": 82, "braking": 83, "pit_crew": 70 },
-      "driver_ids": ["TSU", "HAD"]
+      "driver_ids": ["LAW", "LIN"]
+    },
+    {
+      "id": "cadillac", "name": "Cadillac F1 Team", "short_name": "Cadillac", "color": "blue",
+      "budget": 95,
+      "car": { "engine": 72, "aerodynamics": 67, "mechanical_grip": 70, "reliability": 66, "tire_deg": 69, "braking": 70, "pit_crew": 65 },
+      "driver_ids": ["PER", "BOT"]
     }
   ]
 }

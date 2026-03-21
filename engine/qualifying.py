@@ -18,6 +18,14 @@ class QualiResult:
     lap_time_delta: float   # gap to pole in seconds (0.000 for P1)
 
 
+@dataclass
+class KnockoutQualiResult:
+    q1: List[QualiResult]        # all 20, session-relative deltas
+    q2: List[QualiResult]        # top 15, session-relative deltas
+    q3: List[QualiResult]        # top 10, session-relative deltas
+    final_grid: List[QualiResult]  # positions 1–20, absolute grid order
+
+
 def _qualifying_score(entry: RaceEntry, circuit, weather: str) -> float:
     """One-lap qualifying performance score."""
     driver = entry.driver
@@ -50,6 +58,11 @@ def _qualifying_score(entry: RaceEntry, circuit, weather: str) -> float:
     return car_score + driver_score + randomness
 
 
+def _entries_for_results(results: List[QualiResult], all_entries: List) -> List:
+    entry_map = {e.driver.id: e for e in all_entries}
+    return [entry_map[r.driver.id] for r in results if r.driver.id in entry_map]
+
+
 def simulate_qualifying(
     entries: List[RaceEntry],
     circuit,
@@ -72,3 +85,48 @@ def simulate_qualifying(
             lap_time_delta=round(delta, 3),
         ))
     return results
+
+
+def simulate_knockout_qualifying(
+    entries: List,
+    circuit,
+    weather: str = "dry",
+) -> KnockoutQualiResult:
+    """Simulate Q1/Q2/Q3 knockout qualifying and return all sessions plus final grid."""
+    # Q1 — all 20 drivers
+    q1 = simulate_qualifying(entries, circuit, weather)
+
+    # Q2 — top 15 from Q1
+    q2_entries = _entries_for_results(q1[:15], entries)
+    q2 = simulate_qualifying(q2_entries, circuit, weather)
+
+    # Q3 — top 10 from Q2
+    q3_entries = _entries_for_results(q2[:10], entries)
+    q3 = simulate_qualifying(q3_entries, circuit, weather)
+
+    # Assemble final grid: P1–10 from Q3, P11–15 from Q2, P16–20 from Q1
+    final_grid: List[QualiResult] = []
+    for r in q3:
+        final_grid.append(r)  # positions already 1–10
+
+    for i, r in enumerate(q2[10:15], 11):
+        final_grid.append(QualiResult(
+            position=i,
+            driver=r.driver,
+            team_id=r.team_id,
+            team_name=r.team_name,
+            team_color=r.team_color,
+            lap_time_delta=r.lap_time_delta,
+        ))
+
+    for i, r in enumerate(q1[15:20], 16):
+        final_grid.append(QualiResult(
+            position=i,
+            driver=r.driver,
+            team_id=r.team_id,
+            team_name=r.team_name,
+            team_color=r.team_color,
+            lap_time_delta=r.lap_time_delta,
+        ))
+
+    return KnockoutQualiResult(q1=q1, q2=q2, q3=q3, final_grid=final_grid)

@@ -399,3 +399,34 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Claude Code
+.claude/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# Secrets
+.env
+*.env.local
+
+# Game saves
+saves/
+*.save
+*.sav
+
+# OS
+.DS_Store
+Thumbs.db

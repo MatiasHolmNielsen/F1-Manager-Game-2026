@@ -109,6 +109,8 @@ class RaceReport:
     fastest_lap_time: float = 0.0        # overall fastest lap (seconds)
     driver_fastest_laps: Dict[str, float] = field(default_factory=dict)   # did -> best lap (s)
     lap_data: Dict[str, List[DriverLapRecord]] = field(default_factory=dict)  # did -> per-lap records
+    overtakes_made: Dict[str, int] = field(default_factory=dict)   # did -> successful overtakes
+    defenses_made: Dict[str, int] = field(default_factory=dict)    # did -> successful defenses
 
 
 # ─── Lap simulation helpers ────────────────────────────────────────────────────
@@ -287,6 +289,8 @@ def simulate_race(
     driver_fastest_laps: Dict[str, float] = {}   # type: ignore[assignment]
     pit_stop_log: List[PitStop] = []
     lap_data: Dict[str, List[DriverLapRecord]] = {did: [] for did in entry_map}
+    overtakes_made: Dict[str, int] = {did: 0 for did in entry_map}
+    defenses_made: Dict[str, int] = {did: 0 for did in entry_map}
 
     # ── Lap-by-lap simulation ────────────────────────────────────────────────
     for lap in range(1, total_laps + 1):
@@ -375,7 +379,7 @@ def simulate_race(
             if lap in pit_schedules.get(did, {}):
                 next_compound = pit_schedules[did][lap]
                 old_compound = state.tyre_compound
-                stationary_s = round(2.1 + (90 - car.pit_crew) * 0.025 + random.gauss(0, 0.15), 2)
+                stationary_s = round(2.0 + (90 - car.pit_crew) * 0.05 + random.gauss(0, 0.15), 2)
                 stationary_s = max(1.8, stationary_s)
                 total_pit_s = circuit.pit_lane_loss + stationary_s
                 state.total_race_time += total_pit_s
@@ -448,6 +452,7 @@ def simulate_race(
                     states[ahead_did].total_race_time  = mid + 0.25
                     active[i - 1] = behind_did
                     active[i]     = ahead_did
+                    overtakes_made[behind_did] += 1
 
                     new_pos = i
                     if new_pos <= 10:
@@ -455,6 +460,10 @@ def simulate_race(
                             f"Lap {lap}: {entry_map[behind_did].driver.name} overtakes "
                             f"{entry_map[ahead_did].driver.name} for P{new_pos}"
                         )
+
+                else:
+                    # Failed overtake attempt — defender held their position
+                    defenses_made[ahead_did] += 1
 
             i -= 1
 
@@ -537,4 +546,6 @@ def simulate_race(
         fastest_lap_time=fastest_lap_time if fastest_lap_time < float("inf") else 0.0,
         driver_fastest_laps=driver_fastest_laps,
         lap_data=lap_data,
+        overtakes_made=overtakes_made,
+        defenses_made=defenses_made,
     )
