@@ -15,6 +15,7 @@ from .ui import (
     show_race_header, show_race_results, show_race_events, show_pit_stats,
     show_lap_analysis, show_driver_development, show_standings,
     show_quali_results, show_strategy_menu, show_strategy_summary,
+    show_circuit_briefing, show_race_transition,
     run_knockout_qualifying_with_animation, run_race_with_animation,
 )
 from .management import management_menu
@@ -115,6 +116,9 @@ def main() -> None:
         for race_num, circuit in enumerate(circuits, 1):
             show_race_header(circuit, race_num, total_races)
 
+            # ── Circuit briefing ─────────────────────────────────────────
+            show_circuit_briefing(circuit, player_team)
+
             management_menu(
                 player_team, drivers, teams,
                 race_num, total_races,
@@ -196,13 +200,30 @@ def main() -> None:
 
             # ── View 4: Championship ─────────────────────────────────
             console.clear()
+            prev_team_pts   = dict(team_pts)
+            prev_driver_pts = dict(driver_pts)
             for r in results:
                 driver_pts[r.driver.id] = driver_pts.get(r.driver.id, 0) + r.points
                 team_pts[r.team_id] = team_pts.get(r.team_id, 0) + r.points
             show_standings(driver_pts, team_pts, drivers, teams, player_team_id, season_year=season_year)
 
             if race_num < total_races:
-                console.input("\n[dim]Press Enter for the next race…[/dim]")
+                next_circuit = circuits[race_num]  # race_num is 1-indexed; circuits[race_num] = next one
+                show_race_transition(
+                    prev_circuit=circuit,
+                    next_circuit=next_circuit,
+                    player_team=player_team,
+                    drivers=drivers,
+                    teams=teams,
+                    player_team_id=player_team_id,
+                    driver_pts=driver_pts,
+                    team_pts=team_pts,
+                    prev_team_pts=prev_team_pts,
+                    prev_driver_pts=prev_driver_pts,
+                    race_results=results,
+                    race_num=race_num,
+                    total_races=total_races,
+                )
             else:
                 console.input("\n[dim]Press Enter to see the final standings…[/dim]")
 

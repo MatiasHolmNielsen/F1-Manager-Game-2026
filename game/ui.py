@@ -1015,6 +1015,192 @@ def show_strategy_summary(
 
 # ─── Animation wrappers ───────────────────────────────────────────────────────
 
+def show_circuit_briefing(circuit: Circuit, player_team: Team) -> None:
+    """Pre-race circuit briefing shown once per race weekend before the management hub."""
+    total_laps = race_laps(circuit)
+
+    # Tyre wear
+    wear_color = {"low": "green", "medium": "yellow", "high": "red"}[circuit.tire_wear]
+    wear_label = circuit.tire_wear.upper()
+
+    # Overtaking difficulty
+    od = circuit.overtaking_difficulty
+    if od < 30:
+        ot_label = "[green]EASY[/green]"
+    elif od < 55:
+        ot_label = "[yellow]MODERATE[/yellow]"
+    elif od < 75:
+        ot_label = "[red]DIFFICULT[/red]"
+    else:
+        ot_label = "[bold red]VERY DIFFICULT[/bold red]"
+
+    # Weather forecast
+    wc = circuit.weather_chance
+    if wc < 20:
+        wx_label = "[yellow]DRY[/yellow]"
+    elif wc < 50:
+        wx_label = "[blue]WET RISK[/blue]"
+    else:
+        wx_label = "[bold blue]LIKELY WET[/bold blue]"
+
+    # Car spotlight: which attribute matters most here
+    car = player_team.car
+    if circuit.aero_weight >= circuit.engine_weight:
+        spot_attr = "Aerodynamics"
+        spot_val  = car.aerodynamics
+        spot_note = f"Aero-dominant circuit ({circuit.aero_weight:.0%} aero weight)"
+    else:
+        spot_attr = "Engine"
+        spot_val  = car.engine
+        spot_note = f"Engine-dominant circuit ({circuit.engine_weight:.0%} engine weight)"
+    spot_color = "green" if spot_val >= 75 else ("yellow" if spot_val >= 60 else "red")
+
+    # Strategic hint
+    hints: List[str] = []
+    if circuit.tire_wear == "high":
+        hints.append("High tyre wear — 2-stop viable. Pit crew speed matters.")
+    elif circuit.tire_wear == "low":
+        hints.append("Low tyre wear — 1-stop likely optimal.")
+    if circuit.overtaking_difficulty >= 70:
+        hints.append("Very hard to overtake — qualifying position is crucial.")
+    elif circuit.overtaking_difficulty <= 30:
+        hints.append("Plenty of overtaking chances — aggressive strategy viable.")
+    if circuit.weather_chance >= 40:
+        hints.append("Rain likely — have Intermediates ready.")
+    hint_str = "  ".join(hints) if hints else "Standard conditions expected."
+
+    stats_lines = [
+        f"[dim]Laps:[/dim]        [bold]{total_laps}[/bold]  [dim]×[/dim]  [bold]{circuit.length_km}km[/bold]",
+        f"[dim]Corners:[/dim]     [bold]{circuit.corners}[/bold]",
+        f"[dim]Tyre wear:[/dim]   [bold {wear_color}]{wear_label}[/bold {wear_color}]",
+        f"[dim]Overtaking:[/dim]  {ot_label}",
+        f"[dim]Weather:[/dim]     {wx_label}  [dim]({circuit.weather_chance}% rain)[/dim]",
+        f"[dim]Pit loss:[/dim]    [bold]{circuit.pit_lane_loss}s[/bold]",
+    ]
+
+    hint_lines = [
+        f"[dim]Strategy hint:[/dim]",
+        f"[italic]{hint_str}[/italic]",
+        "",
+        f"[dim]Car spotlight[/dim] [bold]{spot_attr}[/bold]",
+        f"  [{spot_color}]{spot_note}[/{spot_color}]",
+        f"  Your rating: [{spot_color}]{spot_val}[/{spot_color}]",
+    ]
+
+    stats_panel = Panel("\n".join(stats_lines), title="[dim]Circuit[/dim]", border_style="dim", padding=(0, 1))
+    hint_panel  = Panel("\n".join(hint_lines),  title="[dim]Strategy Notes[/dim]", border_style="dim", padding=(0, 1))
+
+    console.print()
+    console.print(Panel(
+        Columns([stats_panel, hint_panel]),
+        title=f"[bold]{circuit.flag}  {circuit.name.upper()}  —  RACE WEEKEND BRIEFING[/bold]",
+        subtitle=f"[dim]{circuit.country}[/dim]",
+        border_style="yellow",
+        padding=(0, 1),
+    ))
+    console.input("\n[dim]Press Enter to open team management…[/dim]")
+
+
+def show_race_transition(
+    prev_circuit: Circuit,
+    next_circuit: Optional[Circuit],
+    player_team: Team,
+    drivers: Dict[str, Driver],
+    teams: Dict[str, Team],
+    player_team_id: str,
+    driver_pts: Dict[str, int],
+    team_pts: Dict[str, int],
+    prev_team_pts: Dict[str, int],
+    prev_driver_pts: Dict[str, int],
+    race_results: List[RaceResult],
+    race_num: int,
+    total_races: int,
+) -> None:
+    """Debrief panel after standings; previews the next race."""
+    # ── Section A: Race debrief ──────────────────────────────────────────────
+    player_results = [r for r in race_results if r.team_id == player_team_id]
+    team_pts_gained = team_pts.get(player_team_id, 0) - prev_team_pts.get(player_team_id, 0)
+    pos_strs = " + ".join(
+        f"P{r.position}" if not r.dnf else "DNF"
+        for r in sorted(player_results, key=lambda x: x.position if not x.dnf else 99)
+    )
+
+    # Championship position & delta
+    sorted_teams_now  = sorted(team_pts.items(), key=lambda x: x[1], reverse=True)
+    sorted_teams_prev = sorted(prev_team_pts.items(), key=lambda x: x[1], reverse=True)
+    pos_now  = next((i for i, (t, _) in enumerate(sorted_teams_now,  1) if t == player_team_id), 0)
+    pos_prev = next((i for i, (t, _) in enumerate(sorted_teams_prev, 1) if t == player_team_id), 0)
+    pos_delta = pos_prev - pos_now   # positive = moved up
+
+    leader_team_id, leader_pts = sorted_teams_now[0]
+    player_pts_now = team_pts.get(player_team_id, 0)
+
+    if leader_team_id == player_team_id:
+        champ_line = f"[bold green]You lead the championship by {player_pts_now - sorted_teams_now[1][1]} points![/bold green]"
+    else:
+        leader_team = teams.get(leader_team_id)
+        gap_to_leader = leader_pts - player_pts_now
+        delta_str = (f" [green](+{pos_delta} pos{'s' if pos_delta != 1 else ''})[/green]" if pos_delta > 0
+                     else f" [red](-{-pos_delta} pos{'s' if -pos_delta != 1 else ''})[/red]" if pos_delta < 0
+                     else "")
+        leader_name = leader_team.short_name if leader_team else leader_team_id
+        champ_line = f"P{pos_now} — [bold]{gap_to_leader}pts[/bold] behind {leader_name}{delta_str}"
+
+    # Notable event from the race
+    notable = ""
+    dnf_results = [r for r in race_results if r.dnf]
+    leader_result = next((r for r in race_results if r.position == 1 and not r.dnf), None)
+    if dnf_results:
+        # Pick a DNF that affected the player (if leader DNF'd it's notable)
+        top_dnf = min(dnf_results, key=lambda r: r.grid_position if r.grid_position > 0 else 99)
+        pts_gained_from_dnf = team_pts_gained - (prev_team_pts.get(player_team_id, 0) - team_pts.get(player_team_id, 0))
+        notable = f"{top_dnf.driver.name} DNF ({top_dnf.dnf_reason})"
+    if leader_result:
+        fl_result = next((r for r in race_results if r.fastest_lap), None)
+        if fl_result and fl_result.team_id != player_team_id and any(r.team_id == player_team_id and r.position <= 10 for r in race_results):
+            notable = notable or f"{fl_result.driver.name} took fastest lap"
+
+    debrief_lines = [
+        f"[bold]Your result:[/bold]  {pos_strs}  >>  [bold cyan]+{team_pts_gained} pts[/bold cyan]",
+        f"[bold]Championship:[/bold] {champ_line}",
+    ]
+    if notable:
+        debrief_lines.append(f"[dim]Notable:[/dim]      {notable}")
+
+    # ── Section B: Next race preview ────────────────────────────────────────
+    if next_circuit:
+        nod = next_circuit.overtaking_difficulty
+        if nod >= 70:
+            ot_hint = "low overtaking, qualifying crucial"
+        elif nod <= 30:
+            ot_hint = "high overtaking, strategy battles likely"
+        else:
+            ot_hint = "moderate overtaking opportunities"
+        wear_hint = {"low": "easy on tyres", "medium": "medium tyre wear", "high": "heavy tyre wear"}[next_circuit.tire_wear]
+        next_laps = race_laps(next_circuit)
+        preview_lines = [
+            f"[bold]Round {race_num + 1} of {total_races}[/bold]",
+            f"[bold white]{next_circuit.flag}  {next_circuit.name}[/bold white]  [dim]{next_circuit.country}[/dim]",
+            f"[dim]{next_laps} laps  •  {ot_hint}  •  {wear_hint}[/dim]",
+            "",
+            f"[dim]Budget:[/dim]  [bold green]€{player_team.budget:.1f}M[/bold green]",
+        ]
+    else:
+        preview_lines = ["[dim]Season complete.[/dim]"]
+
+    debrief_panel = Panel("\n".join(debrief_lines), title="[bold]Race Debrief[/bold]", border_style="cyan",  padding=(0, 1))
+    preview_panel = Panel("\n".join(preview_lines), title="[bold]Next Race[/bold]",   border_style="yellow", padding=(0, 1))
+
+    console.print()
+    console.print(Panel(
+        Columns([debrief_panel, preview_panel]),
+        title=f"[bold]AFTER {prev_circuit.name.upper()}[/bold]",
+        border_style="dim",
+        padding=(0, 1),
+    ))
+    console.input("\n[dim]Press Enter to continue…[/dim]")
+
+
 def run_qualifying_with_animation(
     entries: List[RaceEntry], circuit: Circuit, weather: str
 ) -> List[QualiResult]:
@@ -1041,8 +1227,23 @@ def run_race_with_animation(
     grid: Optional[List[str]] = None,
     strategies: Optional[Dict[str, RaceStrategy]] = None,
 ) -> RaceReport:
-    # Simulate first so results are ready; then animate
+    # Simulate first so results are ready; then animate with live event ticker
     report = simulate_race(entries, circuit, weather, grid=grid, strategies=strategies)
+    total_steps = 20
+    total_laps = race_laps(circuit)
+
+    # Bucket events by animation step: "Lap N: ..." → step proportional to N
+    bucketed: Dict[int, List[str]] = {}
+    for event in report.events:
+        lap_num = 0
+        if event.startswith("Lap "):
+            try:
+                lap_num = int(event.split(":")[0].replace("Lap ", "").strip())
+            except (ValueError, IndexError):
+                lap_num = 0
+        step = min(total_steps - 1, int((lap_num / max(1, total_laps)) * total_steps))
+        bucketed.setdefault(step, []).append(event)
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -1051,9 +1252,27 @@ def run_race_with_animation(
         console=console,
     ) as progress:
         task = progress.add_task(
-            f"[yellow]Racing — {circuit.name}...[/yellow]", total=20
+            f"[yellow]Racing — {circuit.name}...[/yellow]", total=total_steps
         )
-        for _ in range(20):
+        for step in range(total_steps):
             time.sleep(0.08)
             progress.advance(task, 1)
+            for event in bucketed.get(step, []):
+                if "SAFETY CAR" in event or "VIRTUAL SAFETY CAR" in event:
+                    styled = f"[bold yellow]  SC  {event}[/bold yellow]"
+                elif "Racing resumes" in event:
+                    styled = f"[bold green]  GO  {event}[/bold green]"
+                elif "retires" in event or "collision" in event.lower():
+                    styled = f"[red]  !!  {event}[/red]"
+                elif "overtakes" in event:
+                    styled = f"[cyan]  ^   {event}[/cyan]"
+                elif "pits under SC" in event:
+                    styled = f"[yellow]  P   {event}[/yellow]"
+                elif "pits" in event:
+                    styled = f"[dim]  P   {event}[/dim]"
+                elif "damage" in event:
+                    styled = f"[yellow]  !   {event}[/yellow]"
+                else:
+                    styled = f"[dim]  -   {event}[/dim]"
+                console.print(styled)
     return report
