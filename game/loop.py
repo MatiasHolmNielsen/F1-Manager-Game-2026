@@ -10,17 +10,18 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
-from .loader import load_drivers, load_teams, load_circuits
+from .loader import load_drivers, load_teams, load_circuits, load_sponsors
 from .ui import (
     show_race_header, show_race_results, show_race_events, show_pit_stats,
     show_lap_analysis, show_driver_development, show_standings,
     show_quali_results, show_strategy_menu, show_strategy_summary,
-    show_circuit_briefing, show_race_transition,
+    show_circuit_briefing, show_race_transition, show_sponsor_selection,
     run_knockout_qualifying_with_animation, run_race_with_animation,
 )
 from .management import management_menu
 from .finances import _apply_race_finances
 from .offseason import _run_offseason
+from models.sponsor import Sponsor
 from engine.race import RaceEntry, RaceStrategy, simulate_race, ai_strategy
 from engine.development import apply_development
 from models.driver import Driver
@@ -94,17 +95,26 @@ def main() -> None:
 
     drivers = load_drivers()
     teams = load_teams(drivers)
+    all_sponsors = load_sponsors()
 
     player_team_id = show_team_selection(teams, drivers)
     player_team = teams[player_team_id]
 
     season_year = 2026
 
+    circuits = load_circuits()
+    total_races = len(circuits)
+
     console.print(
-        f"[bold]Season {season_year} begins — {len(load_circuits())} races ahead.[/bold]\n"
+        f"[bold]Season {season_year} begins — {total_races} races ahead.[/bold]\n"
         f"[dim]Good luck![/dim]"
     )
     console.input("\n[dim]Press Enter to start…[/dim]")
+
+    # ── Sponsor selection before first race ──────────────────────────────────
+    available_sponsors = random.sample(list(all_sponsors.values()), min(4, len(all_sponsors)))
+    selected_sponsor = show_sponsor_selection(available_sponsors, player_team, total_races)
+    player_team.sponsor_id = selected_sponsor.id
 
     while True:
         circuits = load_circuits()
@@ -158,7 +168,11 @@ def main() -> None:
                     strategies[entry.driver.id] = ai_strategy(entry, circuit, weather)
 
             console.input("\n[dim]Press Enter to start the race…[/dim]")
-            report = run_race_with_animation(entries, circuit, weather, grid=grid, strategies=strategies)
+            report = run_race_with_animation(
+                entries, circuit, weather,
+                grid=grid, strategies=strategies,
+                player_team_id=player_team_id,
+            )
             results = report.results
 
             # ── View 1: Race Result ──────────────────────────────────
@@ -185,7 +199,7 @@ def main() -> None:
                 # ── View 2: Finances ──────────────────────────────────
                 console.clear()
                 show_race_header(circuit, race_num, total_races, weather)
-                _apply_race_finances(player_team, results, player_team_id)
+                _apply_race_finances(player_team, results, player_team_id, all_sponsors)
                 console.input("\n[dim]Press Enter for driver development…[/dim]")
 
                 # ── View 3: Driver Development ────────────────────────
@@ -195,7 +209,7 @@ def main() -> None:
                 show_driver_development(player_team, drivers, gains, xp_gains, report=report)
                 console.input("\n[dim]Press Enter for championship standings…[/dim]")
             else:
-                _apply_race_finances(player_team, results, player_team_id)
+                _apply_race_finances(player_team, results, player_team_id, all_sponsors)
                 gains, xp_gains = apply_development(results, drivers, grid=grid, report=report)
 
             # ── View 4: Championship ─────────────────────────────────
@@ -271,7 +285,7 @@ def main() -> None:
         )
         console.print()
 
-        play_next = _run_offseason(season_year, teams, drivers, team_pts, player_team_id)
+        play_next = _run_offseason(season_year, teams, drivers, team_pts, player_team_id, all_sponsors)
         if not play_next:
             break
         season_year += 1

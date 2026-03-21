@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from rich.align import Align
 from rich.console import Console
@@ -14,6 +14,7 @@ from rich.text import Text
 
 from models.car import UPGRADE_COSTS, upgrade_cost
 from models.driver import Driver
+from models.sponsor import Sponsor
 from models.team import Team
 from engine.generation import generate_rookie
 
@@ -28,6 +29,7 @@ def _run_offseason(
     drivers: Dict[str, Driver],
     team_pts: Dict[str, int],
     player_team_id: str,
+    all_sponsors: Optional[Dict[str, Sponsor]] = None,
 ) -> bool:
     """Run off-season logic. Returns True if the player wants to continue."""
     player_team = teams[player_team_id]
@@ -171,6 +173,10 @@ def _run_offseason(
     # 6. Player driver market
     existing_ids = set(drivers.keys())
     _player_offseason_market(player_team, drivers, teams, existing_ids, season_year)
+
+    # 6b. Sponsor renewal
+    if all_sponsors:
+        _player_sponsor_renewal(player_team, all_sponsors)
 
     # 7. AI teams fill vacant seats
     free_agents = sorted(
@@ -322,3 +328,32 @@ def _player_offseason_market(
                 console.print("[red]Invalid candidate number.[/red]")
         else:
             console.print("[red]Enter a candidate number to sign, R1/R2 to release, or 0 to finish.[/red]")
+
+
+def _player_sponsor_renewal(
+    team: Team,
+    all_sponsors: Dict[str, Sponsor],
+) -> None:
+    """Show sponsor renewal screen. Player keeps current sponsor or picks a new one."""
+    from game.ui import show_sponsor_selection  # avoid circular import at module level
+
+    console.print()
+    console.print(Panel("[bold]SPONSOR RENEWAL[/bold]", border_style="cyan", padding=(0, 2)))
+
+    current = all_sponsors.get(team.sponsor_id) if team.sponsor_id else None
+    if current:
+        console.print(f"  Current sponsor: [bold cyan]{current.name}[/bold cyan] — €{current.race_payment:.2f}M/race")
+        console.print()
+
+    keep = Confirm.ask("Keep your current sponsor?", default=True) if current else False
+
+    if not keep:
+        available = random.sample(list(all_sponsors.values()), min(4, len(all_sponsors)))
+        # Ensure the current sponsor is always included as an option when renewing
+        if current and current not in available:
+            available[0] = current
+        # Use a placeholder total_races (22) for estimation — exact count loaded per season
+        selected = show_sponsor_selection(available, team, total_races=22, renewing=True)
+        team.sponsor_id = selected.id
+    else:
+        console.print(f"  [green]✓ {current.name} contract renewed![/green]\n")

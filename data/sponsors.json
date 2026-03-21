@@ -1,0 +1,94 @@
+{
+  "sponsors": [
+    {
+      "id": "grand_prix_media",
+      "name": "Grand Prix Media",
+      "industry": "Broadcasting",
+      "race_payment": 2.0,
+      "bonus_type": "none",
+      "bonus_amount": 0,
+      "description": "Reliable broadcast partner. Guaranteed €2.0M per race, no strings attached."
+    },
+    {
+      "id": "irontech_engineering",
+      "name": "IronTech Engineering",
+      "industry": "Engineering",
+      "race_payment": 1.75,
+      "bonus_type": "none",
+      "bonus_amount": 0,
+      "description": "Industrial partner backing consistency. €1.75M per race guaranteed."
+    },
+    {
+      "id": "techstream_systems",
+      "name": "TechStream Systems",
+      "industry": "Technology",
+      "race_payment": 1.5,
+      "bonus_type": "none",
+      "bonus_amount": 0,
+      "description": "Tech giant providing stable funding. €1.5M per race, no performance pressure."
+    },
+    {
+      "id": "cloudnine_airlines",
+      "name": "CloudNine Airlines",
+      "industry": "Aviation",
+      "race_payment": 1.25,
+      "bonus_type": "top5_finish",
+      "bonus_amount": 0.5,
+      "description": "Aviation sponsor rewarding consistency. €1.25M base + €0.5M per top-5 finish."
+    },
+    {
+      "id": "apex_racing_fuels",
+      "name": "Apex Racing Fuels",
+      "industry": "Energy",
+      "race_payment": 1.0,
+      "bonus_type": "top5_finish",
+      "bonus_amount": 0.75,
+      "description": "Fuel partner for competitive teams. €1.0M base + €0.75M per top-5 finish."
+    },
+    {
+      "id": "fastlap_analytics",
+      "name": "FastLap Analytics",
+      "industry": "Data & Analytics",
+      "race_payment": 0.75,
+      "bonus_type": "fastest_lap",
+      "bonus_amount": 2.0,
+      "description": "Data firm obsessed with speed. €0.75M base + €2.0M if you set the fastest lap."
+    },
+    {
+      "id": "speedracer_gear",
+      "name": "SpeedRacer Gear",
+      "industry": "Motorsport Apparel",
+      "race_payment": 0.75,
+      "bonus_type": "podium",
+      "bonus_amount": 1.5,
+      "description": "Apparel brand that loves the podium. €0.75M base + €1.5M per podium finish."
+    },
+    {
+      "id": "vortex_energy",
+      "name": "Vortex Energy",
+      "industry": "Energy Drinks",
+      "race_payment": 0.5,
+      "bonus_type": "podium",
+      "bonus_amount": 2.5,
+      "description": "High-octane energy brand. €0.5M base + €2.5M per podium. High risk, high reward."
+    },
+    {
+      "id": "quantumdrive_batteries",
+      "name": "QuantumDrive Batteries",
+      "industry": "Electric Vehicles",
+      "race_payment": 0.5,
+      "bonus_type": "win",
+      "bonus_amount": 3.0,
+      "description": "EV battery maker backing winners. €0.5M base + €3.0M per race win."
+    },
+    {
+      "id": "primepulse_media",
+      "name": "PrimePulse Media",
+      "industry": "Streaming",
+      "race_payment": 0.25,
+      "bonus_type": "win",
+      "bonus_amount": 5.0,
+      "description": "Streaming giant that only promotes winners. €0.25M base + €5.0M per race win."
+    }
+  ]
+}

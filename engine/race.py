@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Callable, Dict, List, Optional, TYPE_CHECKING
 
 from engine.tyres import (
     TYRE_COMPOUNDS, COMPOUND_PACE_DELTA, TYRE_LIFE_BASE,
@@ -251,6 +251,8 @@ def simulate_race(
     weather: str = "dry",
     grid: Optional[List[str]] = None,
     strategies: Optional[Dict[str, RaceStrategy]] = None,
+    player_team_id: Optional[str] = None,
+    sc_pit_callback: Optional[Callable] = None,
 ) -> RaceReport:
     """Simulate a full race lap-by-lap and return a RaceReport."""
     total_laps = race_laps(circuit)
@@ -308,7 +310,7 @@ def simulate_race(
     # ── Safety Car state ─────────────────────────────────────────────────────
     sc_state: Optional[str] = None   # "SC", "VSC", or None
     sc_laps_remaining: int = 0
-    sc_do_pits: bool = False          # trigger SC pit window on next SC effects pass
+    sc_lap_count: int = 0             # laps elapsed since SC/VSC deployed (0 = deployment lap)
 
     # ── Lap-by-lap simulation ────────────────────────────────────────────────
     for lap in range(1, total_laps + 1):
@@ -325,8 +327,8 @@ def simulate_race(
             car = entry.car
 
             # ── Incident check ──────────────────────────────────────────
-            mech_prob = (100 - car.reliability) / 100 * 0.003
-            ctrl_prob = (100 - driver.car_control) / 100 * 0.0015
+            mech_prob = (100 - car.reliability) / 100 * 0.0015
+            ctrl_prob = (100 - driver.car_control) / 100 * 0.0008
             if random.random() < mech_prob + ctrl_prob:
                 state.dnf = True
                 state.dnf_reason = random.choice(DNF_REASONS)
@@ -364,9 +366,9 @@ def simulate_race(
 
             # ── SC / VSC pace penalty ────────────────────────────────
             if sc_state == "SC":
-                lap_time *= 1.30
+                lap_time *= 1.40
             elif sc_state == "VSC":
-                lap_time *= 1.20
+                lap_time *= 1.30
 
             # ── Driver mistake (low-experience big error) ─────────────
             mistake_prob = max(0.0, (60.0 - driver.experience) / 100.0) * 0.04
@@ -437,72 +439,153 @@ def simulate_race(
             if deployed == "SC":
                 sc_state = "SC"
                 sc_laps_remaining = random.randint(3, 5)
-                sc_do_pits = True
+                sc_lap_count = 0
                 events.append(f"Lap {lap}: SAFETY CAR DEPLOYED")
             elif deployed == "VSC":
                 sc_state = "VSC"
                 sc_laps_remaining = random.randint(2, 3)
-                sc_do_pits = False
+                sc_lap_count = 0
                 events.append(f"Lap {lap}: VIRTUAL SAFETY CAR DEPLOYED")
 
         if sc_state is not None:
-            # ── Gap compression ─────────────────────────────────────────
             active_sc = [d for d, s in states.items() if not s.dnf]
             active_sc.sort(key=lambda d: states[d].total_race_time)
-            compression = 0.50 if sc_state == "SC" else 0.25
-            if active_sc:
-                prev_t = states[active_sc[0]].total_race_time
-                for _did in active_sc[1:]:
-                    gap = states[_did].total_race_time - prev_t
-                    new_gap = max(0.15, gap * (1.0 - compression))
-                    states[_did].total_race_time = prev_t + new_gap
-                    prev_t = states[_did].total_race_time
 
-            # ── SC pit window ────────────────────────────────────────────
-            if sc_do_pits:
-                sc_do_pits = False
+            # ── Gap compression ──────────────────────────────────────────
+            if sc_state == "SC":
+                if sc_lap_count == 0:
+                    # Deployment lap: compress gaps by 50%
+                    if active_sc:
+                        prev_t = states[active_sc[0]].total_race_time
+                        for _did in active_sc[1:]:
+                            gap = states[_did].total_race_time - prev_t
+                            new_gap = max(0.15, gap * 0.50)
+                            states[_did].total_race_time = prev_t + new_gap
+                            prev_t = states[_did].total_race_time
+                else:
+                    # Lap 2+: hard-cap each consecutive gap to 1.0s
+                    if active_sc:
+                        prev_t = states[active_sc[0]].total_race_time
+                        for _did in active_sc[1:]:
+                            gap = states[_did].total_race_time - prev_t
+                            new_gap = min(gap, 1.0)
+                            states[_did].total_race_time = prev_t + new_gap
+                            prev_t = states[_did].total_race_time
+            elif sc_state == "VSC" and sc_lap_count == 0:
+                # VSC deployment lap: mild 25% compression as cars respond to delta signal
+                # Lap 2+: no compression — cars maintain existing gaps
+                if active_sc:
+                    prev_t = states[active_sc[0]].total_race_time
+                    for _did in active_sc[1:]:
+                        gap = states[_did].total_race_time - prev_t
+                        new_gap = max(0.15, gap * 0.75)
+                        states[_did].total_race_time = prev_t + new_gap
+                        prev_t = states[_did].total_race_time
+
+            # ── SC / VSC pit window (open every SC/VSC lap) ─────────────
+            # AI pit probability decays each lap; player is always asked
+            if sc_state == "SC":
+                ai_pit_prob = [0.70, 0.25, 0.10][min(sc_lap_count, 2)]
+            else:  # VSC
+                ai_pit_prob = [0.20, 0.10][min(sc_lap_count, 1)]
+
+            # Resolve player decisions via callback if provided
+            sc_decisions: Dict[str, Optional[RaceStrategy]] = {}
+            if sc_pit_callback and player_team_id:
+                player_infos = []
+                pos_lookup = {did: pos + 1 for pos, did in enumerate(active_sc)}
                 for _did, _state in states.items():
                     if _state.dnf:
                         continue
-                    if _state.stint_index == 0 and lap > 5:
-                        if random.random() < 0.70:
-                            _entry = entry_map[_did]
-                            _car = _entry.car
-                            _driver = _entry.driver
-                            next_cmp = "medium"
-                            future_pits = {fl: c for fl, c in pit_schedules.get(_did, {}).items() if fl > lap}
-                            if future_pits:
-                                next_fl = min(future_pits)
-                                next_cmp = future_pits[next_fl]
-                                del pit_schedules[_did][next_fl]
-                            old_cmp = _state.tyre_compound
-                            stat_s = round(2.0 + (90 - _car.pit_crew) * 0.05 + random.gauss(0, 0.15), 2)
-                            stat_s = max(1.8, stat_s)
-                            sc_pit_loss = circuit.pit_lane_loss * 0.5
-                            total_sc_pit = sc_pit_loss + stat_s
-                            _state.total_race_time += total_sc_pit
-                            _state.tyre_age = 0
-                            _state.tyre_compound = next_cmp
-                            _state.stint_index += 1
-                            events.append(
-                                f"Lap {lap}: {_driver.name} pits under SC ({next_cmp}, {total_sc_pit:.1f}s)"
-                            )
-                            pit_stop_log.append(PitStop(
-                                driver_name=_driver.name,
-                                team_name=_entry.team_name,
-                                team_color=_entry.team_color,
-                                lap=lap,
-                                old_compound=old_cmp,
-                                new_compound=next_cmp,
-                                stationary_time=stat_s,
-                                pit_lane_loss=sc_pit_loss,
-                                total_time=round(total_sc_pit, 2),
-                            ))
+                    if entry_map[_did].team_id == player_team_id:
+                        player_infos.append({
+                            "id": _did,
+                            "name": entry_map[_did].driver.name,
+                            "compound": _state.tyre_compound,
+                            "tyre_age": _state.tyre_age,
+                            "position": pos_lookup.get(_did, 0),
+                            "circuit_wear": circuit.tire_wear,
+                            "laps_remaining": total_laps - lap,
+                            "driver_obj": entry_map[_did].driver,
+                            "car_obj": entry_map[_did].car,
+                            "circuit_obj": circuit,
+                            "weather": weather,
+                        })
+                if player_infos:
+                    sc_decisions = sc_pit_callback(lap, total_laps, player_infos)
+
+            pitted_on_sc: set = set()
+            for _did, _state in states.items():
+                if _state.dnf:
+                    continue
+
+                is_player = player_team_id and entry_map[_did].team_id == player_team_id
+
+                if is_player:
+                    sc_strat = sc_decisions.get(_did)   # RaceStrategy or None
+                    should_pit = sc_strat is not None
+                elif lap > 5:
+                    should_pit = random.random() < ai_pit_prob
+                else:
+                    should_pit = False
+
+                if should_pit:
+                    _entry = entry_map[_did]
+                    _car = _entry.car
+                    _driver = _entry.driver
+                    if is_player and sc_strat is not None:
+                        next_cmp = sc_strat.stints[0].compound.lower()
+                        # Rebuild future pit schedule from new strategy
+                        pit_schedules[_did] = {}
+                        stint_lap = lap
+                        for i, stint in enumerate(sc_strat.stints[:-1]):
+                            stint_lap += stint.laps
+                            pit_schedules[_did][stint_lap] = sc_strat.stints[i + 1].compound.lower()
+                    else:
+                        next_cmp = "medium"
+                        future_pits = {fl: c for fl, c in pit_schedules.get(_did, {}).items() if fl > lap}
+                        if future_pits:
+                            next_fl = min(future_pits)
+                            next_cmp = future_pits[next_fl]
+                            del pit_schedules[_did][next_fl]
+                    old_cmp = _state.tyre_compound
+                    stat_s = round(2.0 + (90 - _car.pit_crew) * 0.05 + random.gauss(0, 0.15), 2)
+                    stat_s = max(1.8, stat_s)
+                    sc_pit_loss = circuit.pit_lane_loss * 0.5
+                    total_sc_pit = sc_pit_loss + stat_s
+                    _state.total_race_time += total_sc_pit
+                    _state.tyre_age = 0
+                    _state.tyre_compound = next_cmp
+                    _state.stint_index += 1
+                    pitted_on_sc.add(_did)
+                    events.append(
+                        f"Lap {lap}: {_driver.name} pits under SC ({next_cmp}, {total_sc_pit:.1f}s)"
+                    )
+                    pit_stop_log.append(PitStop(
+                        driver_name=_driver.name,
+                        team_name=_entry.team_name,
+                        team_color=_entry.team_color,
+                        lap=lap,
+                        old_compound=old_cmp,
+                        new_compound=next_cmp,
+                        stationary_time=stat_s,
+                        pit_lane_loss=sc_pit_loss,
+                        total_time=round(total_sc_pit, 2),
+                    ))
+
+            # Apply SC timing credit to non-pitters (variable 2–5s)
+            if pitted_on_sc:
+                sc_pit_credit = random.uniform(2.0, 5.0)
+                for _did, _state in states.items():
+                    if not _state.dnf and _did not in pitted_on_sc:
+                        _state.total_race_time += sc_pit_credit
 
             sc_laps_remaining -= 1
+            sc_lap_count += 1
             if sc_laps_remaining <= 0:
                 events.append(f"Lap {lap}: Racing resumes")
                 sc_state = None
+                sc_lap_count = 0
 
         # ── Overtaking pass ─────────────────────────────────────────────
         # Sort active drivers by total race time (lowest = leader)

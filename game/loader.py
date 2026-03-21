@@ -5,6 +5,7 @@ from typing import Dict, List
 from models.car import Car
 from models.circuit import Circuit
 from models.driver import Driver
+from models.sponsor import Sponsor
 from models.team import Team
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -51,6 +52,19 @@ def load_teams(drivers: Dict[str, Driver]) -> Dict[str, Team]:
             driver_ids=list(t["driver_ids"]),
         )
     return teams
+
+
+def load_sponsors() -> Dict[str, Sponsor]:
+    with open(DATA_DIR / "sponsors.json") as f:
+        data = json.load(f)
+    return {
+        s["id"]: Sponsor(
+            id=s["id"], name=s["name"], industry=s["industry"],
+            race_payment=s["race_payment"], bonus_type=s["bonus_type"],
+            bonus_amount=s["bonus_amount"], description=s["description"],
+        )
+        for s in data["sponsors"]
+    }
 
 
 def load_circuits() -> List[Circuit]:

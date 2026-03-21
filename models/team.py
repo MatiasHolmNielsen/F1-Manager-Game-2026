@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 from .car import Car
 
@@ -14,3 +14,4 @@ class Team:
     car: Car
     driver_ids: List[str] = field(default_factory=list)
     points: int = 0
+    sponsor_id: Optional[str] = None

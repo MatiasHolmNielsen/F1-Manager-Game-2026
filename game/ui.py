@@ -16,8 +16,9 @@ from rich.text import Text
 
 from models.circuit import Circuit
 from models.driver import Driver
+from models.sponsor import Sponsor
 from models.team import Team
-from engine.tyres import TYRE_COMPOUNDS, TyreStint, RaceStrategy, race_laps, adjusted_tyre_life, suggest_strategies, _tyre_score
+from engine.tyres import TYRE_COMPOUNDS, TYRE_LIFE_BASE, TyreStint, RaceStrategy, race_laps, adjusted_tyre_life, suggest_strategies, _tyre_score
 from engine.qualifying import QualiResult, KnockoutQualiResult, simulate_qualifying, simulate_knockout_qualifying
 from engine.race import (
     RaceEntry, RaceResult, RaceReport, PitStop, DriverLapRecord,
@@ -1220,15 +1221,169 @@ def run_qualifying_with_animation(
         return simulate_qualifying(entries, circuit, weather)
 
 
+def _trim_strategy_to_remaining(strategy: RaceStrategy, remaining_laps: int) -> RaceStrategy:
+    """Adjust a RaceStrategy to cover exactly remaining_laps."""
+    stints = list(strategy.stints)
+    total = sum(s.laps for s in stints)
+
+    if total <= remaining_laps:
+        # Extend last stint to fill
+        extra = remaining_laps - total
+        stints[-1] = TyreStint(stints[-1].compound, stints[-1].laps + extra)
+    else:
+        # Drop stints from the end until we fit, then trim the last
+        while len(stints) > 1 and sum(s.laps for s in stints) > remaining_laps:
+            stints.pop()
+        used = sum(s.laps for s in stints[:-1])
+        stints[-1] = TyreStint(stints[-1].compound, remaining_laps - used)
+
+    return RaceStrategy(stints=stints, label=strategy.label)
+
+
+def _show_sc_strategy_panel(
+    circuit,
+    weather: str,
+    car,
+    driver,
+    driver_label: str,
+    remaining_laps: int,
+) -> RaceStrategy:
+    """Display strategy options for remaining SC laps and return chosen strategy."""
+    is_wet = weather == "wet"
+
+    presets_full = suggest_strategies(circuit, weather, car, driver)
+    presets = [_trim_strategy_to_remaining(p, remaining_laps) for p in presets_full]
+
+    if is_wet:
+        recommended_idx = 0
+    else:
+        scores = [_tyre_score(p, circuit, weather, car, driver) for p in presets]
+        recommended_idx = scores.index(max(scores))
+
+    lines: List[str] = []
+    lines.append(
+        f"[bold]SC STRATEGY[/bold] — {circuit.name}  [dim]({driver_label})[/dim]"
+        f"  [yellow]{remaining_laps} laps remaining[/yellow]"
+    )
+    lines.append("")
+
+    lines.append("Compound life (adjusted for this driver):")
+    if is_wet:
+        inter_life = adjusted_tyre_life("intermediate", circuit, car, driver)
+        wet_life   = adjusted_tyre_life("wet",          circuit, car, driver)
+        lines.append(f"  [green]I[/green] Intermediate — ~{inter_life} laps")
+        lines.append(f"  [blue]W[/blue] Wet          — ~{wet_life} laps")
+    else:
+        hard_life = adjusted_tyre_life("hard",   circuit, car, driver)
+        med_life  = adjusted_tyre_life("medium", circuit, car, driver)
+        soft_life = adjusted_tyre_life("soft",   circuit, car, driver)
+        lines.append(f"  [white]H[/white] Hard   — ~{hard_life} laps")
+        lines.append(f"  [yellow]M[/yellow] Medium — ~{med_life} laps")
+        lines.append(f"  [red]S[/red] Soft   — ~{soft_life} laps")
+    lines.append("")
+
+    lines.append("Preset strategies:")
+    for i, preset in enumerate(presets):
+        rec = "  [bold cyan]← rec.[/bold cyan]" if i == recommended_idx else ""
+        lines.append(f"  [[bold]{i + 1}[/bold]] {preset.label:<16} {_fmt_strategy(preset)}{rec}")
+
+    custom_num = len(presets) + 1
+    lines.append(f"  [[bold]{custom_num}[/bold]] Custom — choose compounds manually")
+
+    console.print()
+    console.print(Panel("\n".join(lines), border_style="yellow", padding=(0, 2)))
+
+    valid_choices = [str(i + 1) for i in range(len(presets))] + [str(custom_num)]
+    choice = Prompt.ask("Strategy", choices=valid_choices)
+    choice_idx = int(choice) - 1
+
+    if choice_idx < len(presets):
+        return presets[choice_idx]
+    return _custom_strategy(weather, remaining_laps, circuit, car, driver)
+
+
+def show_sc_strategy_decision(lap: int, total_laps: int, driver_infos: list) -> dict:
+    """Prompt the player for each driver: stay out or pit and choose full remaining strategy."""
+    console.print()
+    remaining = total_laps - lap
+    console.print(Panel(
+        f"[bold yellow]  SAFETY CAR — LAP {lap} of {total_laps}  ({remaining} laps left)[/bold yellow]",
+        border_style="yellow",
+        expand=False,
+    ))
+
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    table.add_column("Driver", style="white")
+    table.add_column("Pos", justify="right")
+    table.add_column("Tyre", justify="center")
+    table.add_column("Age", justify="right")
+    table.add_column("Tyre life left", justify="right")
+    table.add_column("Rec", justify="center")
+
+    recommendations: Dict[str, bool] = {}
+    for info in driver_infos:
+        base_life = TYRE_LIFE_BASE.get(info["circuit_wear"], TYRE_LIFE_BASE["medium"]).get(info["compound"], 25)
+        life_left = max(0, base_life - info["tyre_age"])
+        rec_pit = info["tyre_age"] > base_life * 0.55
+        recommendations[info["id"]] = rec_pit
+        rec_str = "[green]PIT[/green]" if rec_pit else "[dim]STAY[/dim]"
+        cmp_color = {"soft": "red", "medium": "yellow", "hard": "white",
+                     "intermediate": "green", "wet": "blue"}.get(info["compound"], "white")
+        table.add_row(
+            info["name"],
+            f"P{info['position']}",
+            f"[{cmp_color}]{info['compound'].capitalize()}[/{cmp_color}]",
+            str(info["tyre_age"]),
+            f"~{life_left} laps",
+            rec_str,
+        )
+    console.print(table)
+
+    decisions: Dict[str, Optional[RaceStrategy]] = {}
+    for info in driver_infos:
+        rec = recommendations[info["id"]]
+        default = "y" if rec else "n"
+        answer = Prompt.ask(
+            f"  Pit [bold]{info['name']}[/bold]?",
+            choices=["y", "n"],
+            default=default,
+        ).strip().lower()
+
+        if answer == "y":
+            strategy = _show_sc_strategy_panel(
+                info["circuit_obj"],
+                info.get("weather", "dry"),
+                info["car_obj"],
+                info["driver_obj"],
+                info["name"],
+                remaining,
+            )
+            decisions[info["id"]] = strategy
+        else:
+            decisions[info["id"]] = None
+
+    console.print()
+    return decisions
+
+
 def run_race_with_animation(
     entries: List[RaceEntry],
     circuit: Circuit,
     weather: str,
     grid: Optional[List[str]] = None,
     strategies: Optional[Dict[str, RaceStrategy]] = None,
+    player_team_id: Optional[str] = None,
 ) -> RaceReport:
     # Simulate first so results are ready; then animate with live event ticker
-    report = simulate_race(entries, circuit, weather, grid=grid, strategies=strategies)
+    def _sc_callback(lap, total_laps, driver_infos):
+        return show_sc_strategy_decision(lap, total_laps, driver_infos)
+
+    report = simulate_race(
+        entries, circuit, weather,
+        grid=grid, strategies=strategies,
+        player_team_id=player_team_id,
+        sc_pit_callback=_sc_callback,
+    )
     total_steps = 20
     total_laps = race_laps(circuit)
 
@@ -1276,3 +1431,70 @@ def run_race_with_animation(
                     styled = f"[dim]  -   {event}[/dim]"
                 console.print(styled)
     return report
+
+
+# ─── Sponsor selection ────────────────────────────────────────────────────────
+
+def show_sponsor_selection(
+    available_sponsors: List[Sponsor],
+    player_team: Team,
+    total_races: int,
+    renewing: bool = False,
+) -> Sponsor:
+    """Display sponsor selection UI and return the chosen Sponsor."""
+    console.print()
+    title = "[bold]SEASON SPONSORS — Renew your deal[/bold]" if renewing else "[bold]SEASON SPONSORS — Choose your partner[/bold]"
+    console.print(Panel(title, border_style="cyan", padding=(0, 2)))
+
+    if renewing and player_team.sponsor_id:
+        console.print(f"  Current sponsor: [bold cyan]{player_team.sponsor_id.replace('_', ' ').title()}[/bold cyan]\n")
+
+    BONUS_LABELS = {
+        "none": "—",
+        "podium": "Per podium",
+        "win": "Per race win",
+        "fastest_lap": "Fastest lap",
+        "top5_finish": "Per top-5 finish",
+    }
+
+    table = Table(box=box.ROUNDED, header_style="bold cyan", show_lines=False)
+    table.add_column("#", width=3, justify="center")
+    table.add_column("Sponsor", min_width=22)
+    table.add_column("Industry", min_width=16)
+    table.add_column("Per Race", justify="right", width=10)
+    table.add_column("Bonus Condition", min_width=16)
+    table.add_column("Bonus", justify="right", width=8)
+    table.add_column("Est. Season", justify="right", width=12)
+
+    for i, sp in enumerate(available_sponsors, 1):
+        est = sp.race_payment * total_races
+        bonus_label = BONUS_LABELS.get(sp.bonus_type, sp.bonus_type)
+        bonus_str = f"€{sp.bonus_amount:.2f}M" if sp.bonus_amount > 0 else "—"
+        is_current = player_team.sponsor_id == sp.id
+        row_style = "bold green" if is_current else ""
+        suffix = " ★" if is_current else ""
+        table.add_row(
+            str(i),
+            f"[{row_style}]{sp.name}{suffix}[/{row_style}]" if row_style else sp.name + suffix,
+            sp.industry,
+            f"€{sp.race_payment:.2f}M",
+            bonus_label,
+            bonus_str,
+            f"[dim]~€{est:.0f}M[/dim]",
+        )
+
+    console.print(table)
+    console.print()
+    console.print("[dim]Description:[/dim]")
+    for i, sp in enumerate(available_sponsors, 1):
+        console.print(f"  [dim]{i}.[/dim] {sp.description}")
+    console.print()
+
+    valid = [str(i) for i in range(1, len(available_sponsors) + 1)]
+    while True:
+        choice = Prompt.ask(f"Choose your sponsor [dim](1–{len(available_sponsors)})[/dim]")
+        if choice in valid:
+            selected = available_sponsors[int(choice) - 1]
+            console.print(f"\n[bold green]✓ {selected.name} signed as your season sponsor![/bold green]\n")
+            return selected
+        console.print("[red]Invalid choice.[/red]")
