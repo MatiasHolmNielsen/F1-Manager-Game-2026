@@ -122,6 +122,9 @@ def main() -> None:
 
         driver_pts: Dict[str, int] = {did: 0 for did in drivers}
         team_pts: Dict[str, int] = {tid: 0 for tid in teams}
+        season_poles = 0
+        season_fastest_laps = 0
+        season_podiums = 0
 
         for race_num, circuit in enumerate(circuits, 1):
             show_race_header(circuit, race_num, total_races)
@@ -186,20 +189,29 @@ def main() -> None:
             show_race_header(circuit, race_num, total_races, weather)
             show_pit_stats(report.pit_stops, results, circuit)
             console.print()
-            console.print("[dim]Enter = continue  •  [bold]L[/bold] = Lap analysis  •  [bold]Q[/bold] = Skip to standings[/dim]")
-            pit_choice = Prompt.ask("", default="").strip().lower()
-            if pit_choice == "l":
+            while True:
+                pit_choice = Prompt.ask(
+                    "[dim]  ↵ continue  ·  [bold]L[/bold] lap analysis  ·  [bold]Q[/bold] quick skip[/dim]",
+                    default=""
+                ).strip().upper()
+                if pit_choice in ("", "L", "Q"):
+                    break
+                console.print("[red]Enter ↵ to continue, L for lap analysis, or Q to quick skip.[/red]")
+            if pit_choice == "L":
                 console.clear()
                 show_race_header(circuit, race_num, total_races, weather)
                 show_lap_analysis(player_team, drivers, report, circuit)
 
-            quick = pit_choice == "q"
+            quick = pit_choice == "Q"
+
+            races_remaining_after = total_races - race_num
 
             if not quick:
                 # ── View 2: Finances ──────────────────────────────────
                 console.clear()
                 show_race_header(circuit, race_num, total_races, weather)
-                _apply_race_finances(player_team, results, player_team_id, all_sponsors)
+                _apply_race_finances(player_team, results, player_team_id, all_sponsors,
+                                     races_remaining=races_remaining_after)
                 console.input("\n[dim]Press Enter for driver development…[/dim]")
 
                 # ── View 3: Driver Development ────────────────────────
@@ -209,8 +221,32 @@ def main() -> None:
                 show_driver_development(player_team, drivers, gains, xp_gains, report=report)
                 console.input("\n[dim]Press Enter for championship standings…[/dim]")
             else:
-                _apply_race_finances(player_team, results, player_team_id, all_sponsors)
+                budget_before = player_team.budget
+                _apply_race_finances(player_team, results, player_team_id, all_sponsors,
+                                     races_remaining=races_remaining_after)
+                net = player_team.budget - budget_before
                 gains, xp_gains = apply_development(results, drivers, grid=grid, report=report)
+                xp_parts = []
+                for did in player_team.driver_ids:
+                    d = drivers.get(did)
+                    if d and did in gains:
+                        n = sum(1 for v in gains[did].values() if v > 0)
+                        if n > 0:
+                            xp_parts.append(f"{d.name.split()[-1]} +{n} stats")
+                xp_str = " · ".join(xp_parts) if xp_parts else "no stat gains"
+                sign = "+" if net >= 0 else ""
+                console.print(
+                    f"  [dim]Race net: {sign}€{net:.1f}M · Budget: €{player_team.budget:.1f}M · {xp_str}[/dim]"
+                )
+
+            # ── Update season stats ───────────────────────────────────
+            if any(r.grid_position == 1 and r.team_id == player_team_id for r in results):
+                season_poles += 1
+            if any(r.fastest_lap and r.team_id == player_team_id for r in results):
+                season_fastest_laps += 1
+            season_podiums += sum(
+                1 for r in results if r.team_id == player_team_id and r.position <= 3 and not r.dnf
+            )
 
             # ── View 4: Championship ─────────────────────────────────
             console.clear()
@@ -219,7 +255,9 @@ def main() -> None:
             for r in results:
                 driver_pts[r.driver.id] = driver_pts.get(r.driver.id, 0) + r.points
                 team_pts[r.team_id] = team_pts.get(r.team_id, 0) + r.points
-            show_standings(driver_pts, team_pts, drivers, teams, player_team_id, season_year=season_year)
+            show_standings(driver_pts, team_pts, drivers, teams, player_team_id,
+                           season_year=season_year,
+                           races_remaining=races_remaining_after, total_races=total_races)
 
             if race_num < total_races:
                 next_circuit = circuits[race_num]  # race_num is 1-indexed; circuits[race_num] = next one
@@ -237,6 +275,9 @@ def main() -> None:
                     race_results=results,
                     race_num=race_num,
                     total_races=total_races,
+                    season_poles=season_poles,
+                    season_fastest_laps=season_fastest_laps,
+                    season_podiums=season_podiums,
                 )
             else:
                 console.input("\n[dim]Press Enter to see the final standings…[/dim]")

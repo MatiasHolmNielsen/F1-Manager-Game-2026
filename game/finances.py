@@ -23,6 +23,7 @@ def _apply_race_finances(
     results: List[RaceResult],
     player_team_id: str,
     all_sponsors: Optional[Dict[str, Sponsor]] = None,
+    races_remaining: Optional[int] = None,
 ) -> None:
     """Compute and apply race income, ops cost, DNF repairs, sponsor + milestone bonuses."""
     player_results = [r for r in results if r.team_id == player_team_id]
@@ -140,6 +141,9 @@ def _apply_race_finances(
     sign = "+" if net >= 0 else ""
     lines.append(f"\n  Net this race    [{net_color}]{sign}€{net:.1f}M[/{net_color}]")
     lines.append(f"  Budget now       [bold]€{team.budget:.1f}M[/bold]")
+    if races_remaining is not None and races_remaining > 0:
+        projected = team.budget + net * races_remaining
+        lines.append(f"  [dim]Est. season end: ~€{projected:.1f}M  ({races_remaining} races left)[/dim]")
 
     console.print(Panel(
         "\n".join(lines),

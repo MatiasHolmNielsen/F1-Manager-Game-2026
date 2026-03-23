@@ -16,6 +16,16 @@ from .ui import show_team_overview, show_standings, stat_bar
 
 console = Console()
 
+ATTR_DESC = {
+    "engine":          "straight-line speed",
+    "aerodynamics":    "high-speed cornering",
+    "mechanical_grip": "low-speed traction",
+    "reliability":     "DNF resistance",
+    "tire_deg":        "tyre conservation",
+    "braking":         "late-braking ability",
+    "pit_crew":        "pit stop time (60–90)",
+}
+
 
 def upgrade_car_menu(team: Team) -> None:
     attr_map = {
@@ -37,6 +47,7 @@ def upgrade_car_menu(team: Team) -> None:
         )
         table.add_column("#", width=3)
         table.add_column("Attribute", min_width=18)
+        table.add_column("Description", min_width=22)
         table.add_column("Current", justify="center", width=8)
         table.add_column("After", justify="center", width=6)
         table.add_column("Cost", justify="right", width=8)
@@ -48,7 +59,8 @@ def upgrade_car_menu(team: Team) -> None:
             maxed = current >= 100
             color = "green" if team.budget >= cost and not maxed else "red"
             status = "[dim]MAXED[/dim]" if maxed else f"[{color}]€{cost}M[/{color}]"
-            table.add_row(num, label, str(current), str(after), status)
+            desc = f"[dim]{ATTR_DESC.get(attr, '')}[/dim]"
+            table.add_row(num, label, desc, str(current), str(after), status)
 
         table.add_row("0", "[dim]Back[/dim]", "", "", "")
         console.print(table)
@@ -65,6 +77,15 @@ def upgrade_car_menu(team: Team) -> None:
         elif getattr(team.car, attr) >= 100:
             console.print("[yellow]Already maxed out![/yellow]")
         else:
+            current_val = getattr(team.car, attr)
+            after_val = min(100, current_val + UPGRADE_AMOUNT)
+            confirm = Prompt.ask(
+                f"Confirm: upgrade {label} from {current_val} → {after_val} for €{cost:.1f}M? (y/n)",
+                choices=["y", "n"], default="n",
+            )
+            if confirm != "y":
+                console.print("[dim]Cancelled.[/dim]")
+                continue
             team.car.upgrade(attr)
             team.budget -= cost
             console.print(
@@ -202,6 +223,7 @@ def management_menu(
         elif choice == "3":
             driver_market_menu(team, drivers, teams, total_races - race_num + 1, total_races)
         elif choice == "4":
-            show_standings(driver_pts, team_pts, drivers, teams, team.id)
+            show_standings(driver_pts, team_pts, drivers, teams, team.id,
+                           races_remaining=total_races - race_num + 1, total_races=total_races)
         elif choice == "5":
             break

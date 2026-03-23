@@ -96,7 +96,7 @@ def show_team_overview(team: Team, drivers: Dict[str, Driver]) -> None:
             age_colors = {"prospect": "green", "prime": "cyan", "veteran": "yellow", "legend": "red"}
             age_color = age_colors[d.age_group]
             age_str = (
-                f"[{age_color}]{d.age} ({d.age_group})[/{age_color}]  "
+                f"[{age_color}]{d.age}[/{age_color}] [dim]{d.age_group.capitalize()}[/dim]  "
                 f"[dim]POT [/dim][bold]{d.potential}[/bold]"
             )
             d_table.add_row(
@@ -571,6 +571,11 @@ def show_driver_development(
                 badge   = ""
                 val_str = str(val)
 
+            if val >= driver.potential:
+                val_str += " [dim](capped)[/dim]"
+            elif val == driver.potential - 1:
+                val_str += " [yellow](near cap)[/yellow]"
+
             table.add_row(label, val_str, _xp_bar(xp), gained_str, badge)
 
         panels.append(Panel(table, title=f"[bold]{driver.name}[/bold]", padding=(0, 1)))
@@ -582,6 +587,10 @@ def show_driver_development(
         border_style="cyan",
         padding=(0, 1),
     ))
+    console.print(
+        "[dim]Bonus key: [/dim]"
+        "[cyan]Overtake[/cyan]  [blue]Defend[/blue]  [green]Wet[/green]  [magenta]Fastest Lap[/magenta]"
+    )
 
 
 # ─── Championship standings ───────────────────────────────────────────────────
@@ -594,10 +603,15 @@ def show_standings(
     player_team_id: str,
     top_n: int = 10,
     season_year: int = 2026,
+    races_remaining: Optional[int] = None,
+    total_races: Optional[int] = None,
 ) -> None:
     all_sorted_drivers = sorted(driver_pts.items(), key=lambda x: x[1], reverse=True)
     sorted_drivers = all_sorted_drivers[:top_n]
     sorted_teams = sorted(team_pts.items(), key=lambda x: x[1], reverse=True)
+
+    driver_leader_pts = all_sorted_drivers[0][1] if all_sorted_drivers else 0
+    team_leader_id, team_leader_pts = sorted_teams[0] if sorted_teams else (None, 0)
 
     # Find player driver IDs not already in top_n
     player_team = teams.get(player_team_id)
@@ -614,6 +628,7 @@ def show_standings(
     d_table.add_column("Driver", min_width=18)
     d_table.add_column("Team", min_width=16)
     d_table.add_column("Pts", justify="right", width=6)
+    d_table.add_column("Gap", justify="right", width=10)
 
     for i, (did, pts) in enumerate(sorted_drivers, 1):
         d = drivers.get(did)
@@ -621,20 +636,23 @@ def show_standings(
         is_player = t and t.id == player_team_id
         team_str = f"[{t.color}]{t.short_name}[/{t.color}]" if t else "—"
         name_str = f"[bold]{d.name}[/bold]" if is_player else (d.name if d else did)
-        d_table.add_row(str(i), name_str, team_str, str(pts))
+        gap_str = "[dim]— LEADER —[/dim]" if i == 1 else f"[dim]−{driver_leader_pts - pts}[/dim]"
+        d_table.add_row(str(i), name_str, team_str, str(pts), gap_str)
 
     if extra_player_rows:
-        d_table.add_row("[dim]…[/dim]", "", "", "")
+        d_table.add_row("[dim]…[/dim]", "", "", "", "")
         for pos, did, pts in extra_player_rows:
             d = drivers.get(did)
             t = teams.get(d.team_id) if d and d.team_id else None
             team_str = f"[{t.color}]{t.short_name}[/{t.color}]" if t else "—"
-            d_table.add_row(f"[bold]{pos}[/bold]", f"[bold]{d.name}[/bold]" if d else did, team_str, str(pts))
+            gap_str = "[dim]— LEADER —[/dim]" if pos == 1 else f"[dim]−{driver_leader_pts - pts}[/dim]"
+            d_table.add_row(f"[bold]{pos}[/bold]", f"[bold]{d.name}[/bold]" if d else did, team_str, str(pts), gap_str)
 
     c_table = Table(title=f"CONSTRUCTORS' CHAMPIONSHIP — Season {season_year}", box=box.SIMPLE_HEAD, show_edge=False)
     c_table.add_column("Pos", width=4, justify="center")
     c_table.add_column("Team", min_width=18)
     c_table.add_column("Pts", justify="right", width=6)
+    c_table.add_column("Gap", justify="right", width=10)
 
     for i, (tid, pts) in enumerate(sorted_teams, 1):
         t = teams.get(tid)
@@ -642,15 +660,24 @@ def show_standings(
         name_str = f"[{t.color}][bold]{t.short_name}[/bold][/{t.color}]" if is_player else (
             f"[{t.color}]{t.short_name}[/{t.color}]" if t else tid
         )
-        c_table.add_row(str(i), name_str, str(pts))
+        gap_str = "[dim]— LEADER —[/dim]" if i == 1 else f"[dim]−{team_leader_pts - pts}[/dim]"
+        c_table.add_row(str(i), name_str, str(pts), gap_str)
 
     console.print()
     console.print(Columns([d_table, c_table]))
 
+    if races_remaining is not None and total_races is not None and sorted_teams:
+        leader_team = teams.get(team_leader_id)
+        leader_name = leader_team.short_name if leader_team else team_leader_id
+        console.print(
+            f"[dim]{races_remaining} race{'s' if races_remaining != 1 else ''} remaining  ·  "
+            f"Leader: {leader_name} ({team_leader_pts} pts)[/dim]"
+        )
+
 
 # ─── Race events ──────────────────────────────────────────────────────────────
 
-def show_race_events(events: List[str], max_events: int = 12) -> None:
+def show_race_events(events: List[str], max_events: int = 12, circuit=None) -> None:
     """Display notable race events (pit stops, overtakes, DNFs) in a panel."""
     if not events:
         return
@@ -678,9 +705,23 @@ def show_race_events(events: List[str], max_events: int = 12) -> None:
     if total_events > max_events:
         lines.append(f"\n[dim]Showing {len(shown)} of {total_events} events[/dim]")
 
+    subtitle = None
+    if circuit is not None:
+        od = circuit.overtaking_difficulty
+        if od >= 75:
+            ot_label = "Very Difficult overtaking"
+        elif od >= 55:
+            ot_label = "Difficult overtaking"
+        elif od >= 35:
+            ot_label = "Moderate overtaking"
+        else:
+            ot_label = "Easy overtaking"
+        subtitle = f"[dim]{circuit.name}  ·  {ot_label}[/dim]"
+
     console.print(Panel(
         "\n".join(lines),
         title="[bold]RACE EVENTS[/bold]",
+        subtitle=subtitle,
         border_style="yellow",
         padding=(0, 2),
     ))
@@ -1116,6 +1157,9 @@ def show_race_transition(
     race_results: List[RaceResult],
     race_num: int,
     total_races: int,
+    season_poles: int = 0,
+    season_fastest_laps: int = 0,
+    season_podiums: int = 0,
 ) -> None:
     """Debrief panel after standings; previews the next race."""
     # ── Section A: Race debrief ──────────────────────────────────────────────
@@ -1167,6 +1211,11 @@ def show_race_transition(
     ]
     if notable:
         debrief_lines.append(f"[dim]Notable:[/dim]      {notable}")
+    debrief_lines.append(
+        f"[dim]Season so far: {season_poles} pole{'s' if season_poles != 1 else ''}  ·  "
+        f"{season_fastest_laps} fastest lap{'s' if season_fastest_laps != 1 else ''}  ·  "
+        f"{season_podiums} podium{'s' if season_podiums != 1 else ''}[/dim]"
+    )
 
     # ── Section B: Next race preview ────────────────────────────────────────
     if next_circuit:

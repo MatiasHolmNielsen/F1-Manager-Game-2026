@@ -17,6 +17,7 @@ from models.driver import Driver
 from models.sponsor import Sponsor
 from models.team import Team
 from engine.generation import generate_rookie
+from .ui import stat_bar
 
 console = Console()
 
@@ -96,7 +97,7 @@ def _run_offseason(
         elif d.age >= 35 and random.random() < 0.05:
             retire = True
         if retire:
-            retired_names.append(d.name)
+            retired_names.append((d.name, d.age))
             team = teams.get(d.team_id)
             if team and d.id in team.driver_ids:
                 team.driver_ids.remove(d.id)
@@ -156,7 +157,7 @@ def _run_offseason(
         console.print()
         console.print(
             Panel(
-                "\n".join(f"  [dim]•[/dim] {n}" for n in retired_names),
+                "\n".join(f"  [dim]•[/dim] {n} (age {age}) — retired" for n, age in retired_names),
                 title="[bold]RETIREMENTS[/bold]",
                 border_style="red",
                 padding=(0, 2),
@@ -259,11 +260,18 @@ def _player_offseason_market(
         fa_table.add_column("OVR", justify="center", width=5)
         fa_table.add_column("Age", justify="center", width=5)
         fa_table.add_column("POT", justify="center", width=5)
+        fa_table.add_column("Pace", min_width=16)
+        fa_table.add_column("Qual.", min_width=16)
+        fa_table.add_column("Cons.", min_width=16)
         fa_table.add_column("Salary", justify="right", width=8)
         fa_table.add_column("Type", width=8)
         for i, d in enumerate(all_candidates, 1):
             kind = "[dim]Free Agent[/dim]" if d in free_agents else "[cyan]Rookie[/cyan]"
-            fa_table.add_row(str(i), d.name, str(d.overall), str(d.age), str(d.potential), f"€{d.salary}M", kind)
+            fa_table.add_row(
+                str(i), d.name, str(d.overall), str(d.age), str(d.potential),
+                stat_bar(d.pace), stat_bar(d.qualifying_pace), stat_bar(d.consistency),
+                f"€{d.salary}M", kind,
+            )
         console.print(fa_table)
 
         console.print(
