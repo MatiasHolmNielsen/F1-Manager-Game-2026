@@ -90,43 +90,63 @@ def show_team_selection(teams: Dict[str, Team], drivers: Dict[str, Driver]) -> s
         console.print("[red]Invalid choice.[/red]")
 
 
-def main() -> None:
-    show_welcome()
+def main(save_data: dict = None) -> None:
+    if save_data:
+        from game.save_load import apply_save
+        drivers = load_drivers()
+        teams = load_teams(drivers)
+        all_sponsors = load_sponsors()
+        apply_save(save_data, drivers, teams)
+        player_team_id = save_data["player_team_id"]
+        player_team = teams[player_team_id]
+        season_year = save_data["season_year"]
+    else:
+        drivers = load_drivers()
+        teams = load_teams(drivers)
+        all_sponsors = load_sponsors()
 
-    drivers = load_drivers()
-    teams = load_teams(drivers)
-    all_sponsors = load_sponsors()
+        player_team_id = show_team_selection(teams, drivers)
+        player_team = teams[player_team_id]
 
-    player_team_id = show_team_selection(teams, drivers)
-    player_team = teams[player_team_id]
+        season_year = 2026
 
-    season_year = 2026
+        circuits = load_circuits()
+        total_races = len(circuits)
 
-    circuits = load_circuits()
-    total_races = len(circuits)
+        console.print(
+            f"[bold]Season {season_year} begins — {total_races} races ahead.[/bold]\n"
+            f"[dim]Good luck![/dim]"
+        )
+        console.input("\n[dim]Press Enter to start…[/dim]")
 
-    console.print(
-        f"[bold]Season {season_year} begins — {total_races} races ahead.[/bold]\n"
-        f"[dim]Good luck![/dim]"
-    )
-    console.input("\n[dim]Press Enter to start…[/dim]")
-
-    # ── Sponsor selection before first race ──────────────────────────────────
-    available_sponsors = random.sample(list(all_sponsors.values()), min(4, len(all_sponsors)))
-    selected_sponsor = show_sponsor_selection(available_sponsors, player_team, total_races)
-    player_team.sponsor_id = selected_sponsor.id
+        # ── Sponsor selection before first race ──────────────────────────────────
+        available_sponsors = random.sample(list(all_sponsors.values()), min(4, len(all_sponsors)))
+        selected_sponsor = show_sponsor_selection(available_sponsors, player_team, total_races)
+        player_team.sponsor_id = selected_sponsor.id
 
     while True:
         circuits = load_circuits()
         total_races = len(circuits)
 
-        driver_pts: Dict[str, int] = {did: 0 for did in drivers}
-        team_pts: Dict[str, int] = {tid: 0 for tid in teams}
-        season_poles = 0
-        season_fastest_laps = 0
-        season_podiums = 0
+        if save_data:
+            driver_pts: Dict[str, int] = save_data["driver_pts"]
+            team_pts: Dict[str, int] = save_data["team_pts"]
+            season_poles        = save_data["season_poles"]
+            season_fastest_laps = save_data["season_fastest_laps"]
+            season_podiums      = save_data["season_podiums"]
+            start_race          = save_data["race_num"]
+            save_data = None  # only use once
+        else:
+            driver_pts = {did: 0 for did in drivers}
+            team_pts   = {tid: 0 for tid in teams}
+            season_poles = 0
+            season_fastest_laps = 0
+            season_podiums = 0
+            start_race = 1
 
         for race_num, circuit in enumerate(circuits, 1):
+            if race_num < start_race:
+                continue
             show_race_header(circuit, race_num, total_races)
 
             # ── Circuit briefing ─────────────────────────────────────────
@@ -163,7 +183,11 @@ def main() -> None:
             show_race_header(circuit, race_num, total_races, weather)
 
             # Strategy selection — player picks, AI fills the rest
-            player_strategies = show_strategy_menu(circuit, weather, player_team, drivers)
+            from engine.tyres import DEFAULT_TYRE_ALLOCATION
+            player_alloc = {did: dict(DEFAULT_TYRE_ALLOCATION)
+                            for did in player_team.driver_ids if did in drivers}
+            player_strategies = show_strategy_menu(circuit, weather, player_team, drivers,
+                                                   allocation=player_alloc)
             show_strategy_summary(player_team, drivers, player_strategies)
             strategies: Dict[str, RaceStrategy] = dict(player_strategies)
             for entry in entries:
@@ -175,6 +199,7 @@ def main() -> None:
                 entries, circuit, weather,
                 grid=grid, strategies=strategies,
                 player_team_id=player_team_id,
+                player_allocation=player_alloc,
             )
             results = report.results
 
@@ -200,7 +225,7 @@ def main() -> None:
             if pit_choice == "L":
                 console.clear()
                 show_race_header(circuit, race_num, total_races, weather)
-                show_lap_analysis(player_team, drivers, report, circuit)
+                show_lap_analysis(player_team, drivers, report, circuit, player_team_id=player_team_id)
 
             quick = pit_choice == "Q"
 
@@ -255,6 +280,15 @@ def main() -> None:
             for r in results:
                 driver_pts[r.driver.id] = driver_pts.get(r.driver.id, 0) + r.points
                 team_pts[r.team_id] = team_pts.get(r.team_id, 0) + r.points
+
+            from game.save_load import save_game
+            save_game(
+                season_year, player_team_id,
+                race_num + 1,
+                season_poles, season_fastest_laps, season_podiums,
+                driver_pts, team_pts, drivers, teams,
+            )
+
             show_standings(driver_pts, team_pts, drivers, teams, player_team_id,
                            season_year=season_year,
                            races_remaining=races_remaining_after, total_races=total_races)

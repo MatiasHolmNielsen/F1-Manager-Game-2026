@@ -19,7 +19,8 @@ No tests. Game runs interactively in the terminal.
 | `engine/development.py` | XP tables, stat growth, decline |
 | `engine/generation.py` | Rookie stat ranges |
 | `game/loop.py` | Season/race loop, team selection |
-| `game/loader.py` | JSON loading |
+| `game/loader.py` | JSON loading; `_base_dir()` handles PyInstaller frozen path |
+| `game/save_load.py` | Save/load single slot (`save.json`); `SAVE_PATH` handles frozen path |
 | `game/management.py` | Car upgrade menu, driver market |
 | `game/finances.py` | Race prize money, sponsor bonuses |
 | `game/offseason.py` | Constructor prizes, car degradation, retirements |
@@ -42,5 +43,18 @@ No tests. Game runs interactively in the terminal.
 - **Car degradation** off-season: −2–5 pts per attr, floor 60 (reliability 65) (`offseason.py`)
 - **Driver overall weights**: `models/driver.py` — pace 25%, consistency 18%, experience 9% …
 
+## Save / load
+- Single slot: `save.json` in repo root (next to `main.py`), or next to the `.exe` when built with PyInstaller.
+- Auto-saves after every race (post-standings). On startup, if `save.json` exists the player is prompted N/L.
+- `save_load.py`: `save_exists()`, `save_game()`, `load_game()`, `apply_save()` — only mutable fields persisted; immutable fields (name, nationality, color) always re-read from JSON.
+- `loop.py:main(save_data=None)` — pass loaded dict to resume; `None` starts fresh.
+
+## Build (distributable exe)
+```bash
+pip install pyinstaller
+python -m PyInstaller --onedir --name "F1Manager2026" --add-data "data;data" main.py
+```
+Produces `dist/F1Manager2026/`. Zip and share — friend runs `F1Manager2026.exe` from a terminal.
+
 ## Data flow
-`loop.py:main()` → loader → team/sponsor selection → per-race: management_menu → qualifying → strategy_menu → simulate_race → finances → development → standings → offseason
+`main.py` → `show_welcome()` → load-prompt (if save exists) → `loop.py:main(save_data)` → loader → team/sponsor selection → per-race: management_menu → qualifying → strategy_menu → simulate_race → finances → development → standings → **auto-save** → offseason

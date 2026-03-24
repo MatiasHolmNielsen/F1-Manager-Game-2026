@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 from typing import Dict, List
 
@@ -8,7 +9,15 @@ from models.driver import Driver
 from models.sponsor import Sponsor
 from models.team import Team
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+
+def _base_dir() -> Path:
+    # When bundled by PyInstaller, data files are extracted to sys._MEIPASS.
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent.parent
+
+
+DATA_DIR = _base_dir() / "data"
 
 
 def load_drivers() -> Dict[str, Driver]:

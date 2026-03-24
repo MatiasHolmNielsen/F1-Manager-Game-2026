@@ -131,32 +131,67 @@ def run_knockout_qualifying_with_animation(
 
 
 def _custom_strategy(weather: str, total_laps: int, circuit, car, driver,
-                     rain_prob: float = 0.0) -> RaceStrategy:
-    """Custom strategy builder — all 5 compounds always available."""
+                     rain_prob: float = 0.0, allocation=None) -> RaceStrategy:
+    """Custom strategy builder — 0 at any prompt restarts from stop count."""
     valid_map = {"H": "hard", "M": "medium", "S": "soft", "I": "intermediate", "W": "wet"}
 
-    while True:
-        stops_str = Prompt.ask("Number of pit stops", choices=["1", "2", "3"])
-        num_stints = int(stops_str) + 1
+    while True:  # outer: restart from stint count
+        stints_str = Prompt.ask("Number of stints", choices=["1", "2", "3", "4"])
+        num_stints = int(stints_str)
         stints: List[TyreStint] = []
-        remaining = total_laps
+        usage_so_far: Dict[str, int] = {}
 
-        for i in range(num_stints):
+        i = 0
+        go_back_to_stops = False
+        while i < num_stints:
             is_last = (i == num_stints - 1)
+            remaining = total_laps - sum(s.laps for s in stints)
 
-            lives = {k: adjusted_tyre_life(valid_map[k], circuit, car, driver) for k in valid_map}
-            life_hint = "  ".join(
-                f"[{TYRE_COMPOUNDS[valid_map[k]]['color']}]{k}[/{TYRE_COMPOUNDS[valid_map[k]]['color']}]"
-                f" ~{lives[k]}L"
-                for k in ["H", "M", "S", "I", "W"]
-            )
-            console.print(f"  Tyre life: {life_hint}  |  [dim]{remaining} laps remaining[/dim]")
+            # ── Tyre life hints ───────────────────────────────────────────────
+            life_hint_parts = []
+            for k in ["H", "M", "S", "I", "W"]:
+                cmp = valid_map[k]
+                col = TYRE_COMPOUNDS[cmp]["color"]
+                life_v = adjusted_tyre_life(cmp, circuit, car, driver, rain_prob=rain_prob)
+                sets_left = (allocation.get(cmp, 0) - usage_so_far.get(cmp, 0)) if allocation else None
+                if sets_left is not None and sets_left <= 0:
+                    life_hint_parts.append(f"[dim][{col}]{k}[/{col}] ~{life_v}L [red][0 sets][/red][/dim]")
+                elif sets_left is not None:
+                    life_hint_parts.append(f"[{col}]{k}[/{col}] ~{life_v}L [dim][{sets_left}][/dim]")
+                else:
+                    life_hint_parts.append(f"[{col}]{k}[/{col}] ~{life_v}L")
+            life_hint = "  ".join(life_hint_parts)
+            back_hint = "[dim]  0=back[/dim]" if i > 0 else "[dim]  0=restart[/dim]"
+            console.print(f"  Tyre life: {life_hint}  |  [dim]{remaining} laps remaining[/dim]{back_hint}")
 
-            key = Prompt.ask(f"Stint {i + 1} compound [H/M/S/I/W]",
-                             choices=list(valid_map.keys()), case_sensitive=False).upper()
+            # ── Compound choice ───────────────────────────────────────────────
+            key = Prompt.ask(
+                f"Stint {i + 1} compound [H/M/S/I/W · 0=back]",
+                choices=list(valid_map.keys()) + ["0"], case_sensitive=False,
+            ).upper()
+
+            if key == "0":
+                if i == 0:
+                    go_back_to_stops = True
+                    break
+                # undo previous stint and step back
+                prev_cmp = stints[-1].compound
+                usage_so_far[prev_cmp] = max(0, usage_so_far.get(prev_cmp, 0) - 1)
+                stints.pop()
+                i -= 1
+                continue
+
             compound = valid_map[key]
-            life = adjusted_tyre_life(compound, circuit, car, driver)
+            life = adjusted_tyre_life(compound, circuit, car, driver, rain_prob=rain_prob)
 
+            if allocation is not None:
+                used = usage_so_far.get(compound, 0)
+                avail = allocation.get(compound, 0)
+                if used >= avail:
+                    console.print(f"  [yellow]⚠ No {compound} sets remaining "
+                                  f"(allocation: {avail}). Race engine may override.[/yellow]")
+
+            # ── Lap count ─────────────────────────────────────────────────────
             if is_last:
                 laps = remaining
                 overrun = laps - life
@@ -167,35 +202,47 @@ def _custom_strategy(weather: str, total_laps: int, circuit, car, driver,
                     )
                 else:
                     console.print(f"  [dim]Last stint: {laps} laps (within tyre life ✓)[/dim]")
+                stints.append(TyreStint(compound=compound, laps=laps))
+                usage_so_far[compound] = usage_so_far.get(compound, 0) + 1
+                i += 1
             else:
                 max_laps = remaining - (num_stints - i - 1)
+                chosen_laps = None
                 while True:
-                    laps_str = Prompt.ask(f"Stint {i + 1} laps [1–{max_laps}]")
+                    laps_str = Prompt.ask(f"Stint {i + 1} laps [1–{max_laps} · 0=back]")
+                    if laps_str.strip() == "0":
+                        break  # redo compound for this stint
                     try:
                         laps = int(laps_str)
                         if 1 <= laps <= max_laps:
+                            chosen_laps = laps
                             break
                         console.print(f"[red]Enter a number between 1 and {max_laps}.[/red]")
                     except ValueError:
                         console.print("[red]Enter a valid number.[/red]")
-                overrun = laps - life
+
+                if chosen_laps is None:
+                    continue  # redo compound for this stint (don't advance i)
+
+                overrun = chosen_laps - life
                 if overrun > 0:
                     console.print(
-                        f"  [yellow]⚠ Stint {i + 1}: {laps} laps on {compound} "
+                        f"  [yellow]⚠ Stint {i + 1}: {chosen_laps} laps on {compound} "
                         f"(life ~{life}L, overrun {overrun}L — puncture risk!)[/yellow]"
                     )
+                stints.append(TyreStint(compound=compound, laps=chosen_laps))
+                usage_so_far[compound] = usage_so_far.get(compound, 0) + 1
+                i += 1
 
-            stints.append(TyreStint(compound=compound, laps=laps))
-            remaining -= laps
+        if go_back_to_stops:
+            continue  # restart outer while True (stop count)
 
+        # ── Validate last stint ───────────────────────────────────────────────
         last = stints[-1]
-        last_life = adjusted_tyre_life(last.compound, circuit, car, driver)
+        last_life = adjusted_tyre_life(last.compound, circuit, car, driver, rain_prob=rain_prob)
         if last.laps > last_life * 1.5:
-            console.print(
-                f"[red]✗ Strategy rejected: last stint ({last.laps} laps on {last.compound}, "
-                f"life ~{last_life}L) would destroy the tyre before the finish. "
-                f"Maximum is {int(last_life * 1.5)} laps. Try again.[/red]"
-            )
+            console.print(f"[red]✗ Strategy rejected: last stint ({last.laps}L on {last.compound}, "
+                          f"life ~{last_life}L). Max {int(last_life * 1.5)}L. Try again.[/red]")
             continue
 
         return RaceStrategy(stints=stints, label="Custom")
@@ -210,9 +257,10 @@ def _show_pit_panel(
     title: str = "TYRE STRATEGY",
     context_str: str = "",
     border_color: str = "cyan",
+    allocation: Optional[Dict[str, int]] = None,
 ) -> RaceStrategy:
     """Universal pit strategy panel — all 5 compounds always shown."""
-    presets = suggest_strategies(circuit, weather, car, driver)
+    presets = suggest_strategies(circuit, weather, car, driver, rain_prob=rain_prob)
     if weather == "wet":
         recommended_idx = 0
     else:
@@ -236,7 +284,7 @@ def _show_pit_panel(
     # ── All compounds ────────────────────────────────────────────────────
     lines.append("Compounds (tyre life · pace at current conditions):")
     for cmp, sym, col in _ALL_CMP:
-        life = adjusted_tyre_life(cmp, circuit, car, driver)
+        life = adjusted_tyre_life(cmp, circuit, car, driver, rain_prob=rain_prob)
         delta = _weather_compound_delta(cmp, rain_prob)
         if delta < 0.4:
             pace_note = "  [bold green]← optimal[/bold green]"
@@ -246,7 +294,14 @@ def _show_pit_panel(
             pace_note = f"  [yellow]−{delta:.1f}s/lap[/yellow]"
         else:
             pace_note = f"  [red]−{delta:.1f}s/lap (wrong conditions)[/red]"
-        lines.append(f"  [{col}]{sym}[/{col}] {cmp.capitalize():<14} ~{life:>2}L{pace_note}")
+        if allocation is not None:
+            sets_left = allocation.get(cmp, 0)
+            sets_str = (f"  [red][0 sets][/red]" if sets_left <= 0
+                        else f"  [yellow][{sets_left} set][/yellow]" if sets_left == 1
+                        else f"  [dim][{sets_left} sets][/dim]")
+        else:
+            sets_str = ""
+        lines.append(f"  [{col}]{sym}[/{col}] {cmp.capitalize():<14} ~{life:>2}L{sets_str}{pace_note}")
     lines.append("")
 
     # ── Weather forecast ─────────────────────────────────────────────────
@@ -278,10 +333,23 @@ def _show_pit_panel(
         lines.append("")
 
     # ── Preset strategies ────────────────────────────────────────────────
+    preset_valid = [True] * len(presets)
+    if allocation is not None:
+        for idx, preset in enumerate(presets):
+            usage: Dict[str, int] = {}
+            for stint in preset.stints:
+                usage[stint.compound] = usage.get(stint.compound, 0) + 1
+            if any(cnt > allocation.get(cmp, 0) for cmp, cnt in usage.items()):
+                preset_valid[idx] = False
+
     lines.append("Preset strategies:")
     for i, preset in enumerate(presets):
         rec = "  [bold cyan]← rec.[/bold cyan]" if i == recommended_idx else ""
-        lines.append(f"  [[bold]{i + 1}[/bold]] {preset.label:<16} {_fmt_strategy(preset)}{rec}")
+        if not preset_valid[i]:
+            lines.append(f"  [[bold]{i + 1}[/bold]] [dim]{preset.label:<16} "
+                         f"{_fmt_strategy(preset)}[/dim]  [red](exceeds allocation)[/red]")
+        else:
+            lines.append(f"  [[bold]{i + 1}[/bold]] {preset.label:<16} {_fmt_strategy(preset)}{rec}")
     custom_num = len(presets) + 1
     lines.append(f"  [[bold]{custom_num}[/bold]] Custom — choose any compound manually")
 
@@ -291,25 +359,32 @@ def _show_pit_panel(
     valid_choices = [str(i + 1) for i in range(len(presets))] + [str(custom_num)]
     choice = Prompt.ask("Strategy", choices=valid_choices)
     choice_idx = int(choice) - 1
-
     if choice_idx < len(presets):
         return presets[choice_idx]
-    return _custom_strategy(weather, total_laps, circuit, car, driver, rain_prob=rain_prob)
+    return _custom_strategy(weather, total_laps, circuit, car, driver,
+                            rain_prob=rain_prob, allocation=allocation)
 
 
 def show_strategy_menu(
     circuit: Circuit, weather: str, player_team: Team, drivers: Dict[str, Driver],
+    allocation=None,
 ) -> Dict[str, RaceStrategy]:
     player_drivers = [drivers[did] for did in player_team.driver_ids if did in drivers]
     car = player_team.car
     result: Dict[str, RaceStrategy] = {}
     total = race_laps(circuit)
     for driver in player_drivers:
+        drv_alloc = allocation.get(driver.id) if allocation else None
         result[driver.id] = _show_pit_panel(
             circuit, car, driver, driver.name,
             total_laps=total, weather=weather,
             rain_prob=0.0 if weather != "wet" else 75.0,
+            allocation=drv_alloc,
         )
+        # Deduct starting set after panel returns
+        if allocation and driver.id in allocation:
+            start_cmp = result[driver.id].stints[0].compound
+            allocation[driver.id][start_cmp] = max(0, allocation[driver.id].get(start_cmp, 0) - 1)
     return result
 
 

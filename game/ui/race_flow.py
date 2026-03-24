@@ -260,6 +260,7 @@ def show_sponsor_selection(
 def run_race_with_animation(
     entries, circuit: Circuit, weather: str,
     grid=None, strategies=None, player_team_id=None,
+    player_allocation=None,
 ):
     def _sc_callback(lap, total_laps, driver_infos):
         return show_sc_strategy_decision(lap, total_laps, driver_infos)
@@ -273,6 +274,7 @@ def run_race_with_animation(
         player_team_id=player_team_id,
         sc_pit_callback=_sc_callback,
         weather_callback=_weather_callback,
+        player_allocation=player_allocation,
     )
     total_steps = 20
     total_laps = race_laps(circuit)

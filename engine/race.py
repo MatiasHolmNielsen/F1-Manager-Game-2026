@@ -70,6 +70,16 @@ def _execute_pit_stop(
     return total_time
 
 
+# ─── Allocation helper ────────────────────────────────────────────────────────
+
+def _best_available_cmp(live_alloc: dict, did: str, preferred: str) -> str:
+    """Return preferred compound if sets remain, else compound with most sets."""
+    alloc = live_alloc.get(did, {})
+    if alloc.get(preferred, 0) > 0:
+        return preferred
+    return max(alloc, key=lambda c: alloc[c], default=preferred)
+
+
 # ─── Race simulation ──────────────────────────────────────────────────────────
 
 def simulate_race(
@@ -81,6 +91,7 @@ def simulate_race(
     player_team_id: Optional[str] = None,
     sc_pit_callback: Optional[Callable] = None,
     weather_callback: Optional[Callable] = None,
+    player_allocation: Optional[Dict[str, Dict[str, int]]] = None,
 ) -> RaceReport:
     """Simulate a full race lap-by-lap and return a RaceReport."""
     total_laps = race_laps(circuit)
@@ -123,6 +134,10 @@ def simulate_race(
             dnf_reason="",
             pit_this_lap=False,
         )
+
+    live_alloc: Dict[str, Dict[str, int]] = {
+        did: dict(alloc) for did, alloc in (player_allocation or {}).items()
+    }
 
     fastest_lap_time: float = float("inf")
     fastest_lap_driver: Optional[str] = None
@@ -316,11 +331,19 @@ def simulate_race(
             # ── Scheduled pit stop ────────────────────────────────────────────
             if lap in pit_schedules.get(did, {}):
                 next_cmp = pit_schedules[did][lap]
+                is_player_driver = player_team_id and entry_map[did].team_id == player_team_id
+                if is_player_driver and live_alloc.get(did):
+                    actual_cmp = _best_available_cmp(live_alloc, did, next_cmp)
+                    if actual_cmp != next_cmp:
+                        events.append(f"Lap {lap}: {entry.driver.name} — no {next_cmp} sets left, switching to {actual_cmp}")
+                    next_cmp = actual_cmp
                 old_cmp = state.tyre_compound
                 _execute_pit_stop(
                     did, next_cmp, old_cmp, state, entry, circuit, lap,
                     pit_stop_log, events, pitted_this_lap, pit_recovery_laps_left,
                 )
+                if is_player_driver and did in live_alloc:
+                    live_alloc[did][next_cmp] = max(0, live_alloc[did].get(next_cmp, 0) - 1)
                 state.pit_this_lap = True
                 if did in lap_snapshots:
                     lap_snapshots[did]["pitted"] = True
@@ -437,6 +460,7 @@ def simulate_race(
                             "rain_prob": rain_prob,
                             "forecast": sc_forecast,
                             "trend": sc_trend,
+                            "allocation": dict(live_alloc.get(_did, {})),
                         })
                 if player_infos:
                     sc_decisions = sc_pit_callback(lap, total_laps, player_infos)
@@ -460,6 +484,11 @@ def simulate_race(
                     _entry = entry_map[_did]
                     if is_player and sc_strat is not None:
                         next_cmp = sc_strat.stints[0].compound.lower()
+                        if live_alloc.get(_did):
+                            actual_cmp = _best_available_cmp(live_alloc, _did, next_cmp)
+                            if actual_cmp != next_cmp:
+                                events.append(f"Lap {lap}: {_entry.driver.name} — no {next_cmp} sets left under SC, switching to {actual_cmp}")
+                            next_cmp = actual_cmp
                         pit_schedules[_did] = {}
                         stint_lap = lap
                         for i, stint in enumerate(sc_strat.stints[:-1]):
@@ -477,6 +506,8 @@ def simulate_race(
                         pit_stop_log, events, pitted_this_lap, pit_recovery_laps_left,
                         event_suffix=f" under {sc_state}",
                     )
+                    if is_player and _did in live_alloc:
+                        live_alloc[_did][next_cmp] = max(0, live_alloc[_did].get(next_cmp, 0) - 1)
                     pitted_on_sc.add(_did)
                     if _did in lap_snapshots:
                         lap_snapshots[_did]["pitted"] = True
@@ -534,6 +565,7 @@ def simulate_race(
                             "driver_obj": entry_map[_did].driver,
                             "car_obj": entry_map[_did].car,
                             "circuit_obj": circuit,
+                            "allocation": dict(live_alloc.get(_did, {})),
                         })
 
                 if player_infos_w:
@@ -559,6 +591,11 @@ def simulate_race(
                         if w_strat is not None:
                             _entry = entry_map[_did]
                             next_cmp = w_strat.stints[0].compound.lower()
+                            if live_alloc.get(_did):
+                                actual_cmp = _best_available_cmp(live_alloc, _did, next_cmp)
+                                if actual_cmp != next_cmp:
+                                    events.append(f"Lap {lap}: {_entry.driver.name} — no {next_cmp} sets left for weather, switching to {actual_cmp}")
+                                next_cmp = actual_cmp
                             pit_schedules[_did] = {}
                             stint_lap = lap
                             for _i, _stint in enumerate(w_strat.stints[:-1]):
@@ -569,6 +606,8 @@ def simulate_race(
                                 pit_stop_log, events, pitted_this_lap, pit_recovery_laps_left,
                                 event_suffix=" for weather",
                             )
+                            if _did in live_alloc:
+                                live_alloc[_did][next_cmp] = max(0, live_alloc[_did].get(next_cmp, 0) - 1)
                             if _did in lap_snapshots:
                                 lap_snapshots[_did]["pitted"] = True
 

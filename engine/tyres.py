@@ -30,11 +30,18 @@ COMPOUND_PACE_DELTA = {
 
 # Base tyre life in laps per compound per circuit wear level
 TYRE_LIFE_BASE = {
-    "low":    {"hard": 40, "medium": 26, "soft": 18},
-    "medium": {"hard": 30, "medium": 19, "soft": 13},
-    "high":   {"hard": 20, "medium": 13, "soft": 9},
+    "low":    {"hard": 40, "medium": 26, "soft": 20},
+    "medium": {"hard": 30, "medium": 19, "soft": 15},
+    "high":   {"hard": 20, "medium": 13, "soft": 11},
 }
-# Intermediate: 28 laps base;  Wet: 35 laps base (weather-dependent, not circuit wear)
+
+DEFAULT_TYRE_ALLOCATION: Dict[str, int] = {
+    "soft": 2, "medium": 2, "hard": 2, "intermediate": 2, "wet": 2,
+}
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
 
 
 @dataclass
@@ -63,18 +70,15 @@ def adjusted_tyre_life(compound: str, circuit, car, driver, rain_prob: float = 0
     Rain penalty: inters/wets degrade fast on wrong track conditions.
     """
     if compound == "intermediate":
-        base = 28
+        # Smooth curve: ~12L dry → ~38L optimal at 65%+ (damp/wet)
+        t = min(1.0, rain_prob / 65)
+        base = int(_lerp(12, 38, t))
     elif compound == "wet":
-        base = 35
+        # Smooth curve: ~12L dry → ~47L in heavy rain
+        t = min(1.0, rain_prob / 100)
+        base = int(_lerp(12, 47, t))
     else:
         base = TYRE_LIFE_BASE[circuit.tire_wear][compound]
-
-    # Inters on very dry track overheat and degrade fast
-    if compound == "intermediate" and rain_prob < 50:
-        base = int(base * (0.45 + rain_prob / 50 * 0.55))
-    # Wets on dry/damp track also degrade fast
-    elif compound == "wet" and rain_prob < 65:
-        base = int(base * (0.35 + rain_prob / 65 * 0.65))
 
     driver_factor = 0.6 + driver.tire_management / 100 * 0.8
     car_factor = 0.7 + car.tire_deg / 100 * 0.6
@@ -121,12 +125,12 @@ def _tyre_score(strategy: RaceStrategy, circuit, weather: str, car, driver) -> f
     return stint_contributions - total_pit_penalty
 
 
-def _working_life(compound: str, circuit, car, driver) -> int:
+def _working_life(compound: str, circuit, car, driver, rain_prob: float = 0.0) -> int:
     """Return the 'working' stint length — the lap count before deg becomes costly.
 
     Uses ~70-82% of full tyre life depending on circuit wear level.
     """
-    full_life = adjusted_tyre_life(compound, circuit, car, driver)
+    full_life = adjusted_tyre_life(compound, circuit, car, driver, rain_prob=rain_prob)
     frac = {"low": 0.82, "medium": 0.76, "high": 0.70}[circuit.tire_wear]
     return max(3, int(full_life * frac))
 
@@ -134,14 +138,15 @@ def _working_life(compound: str, circuit, car, driver) -> int:
 def _fill_smart(
     stints: List[TyreStint], remaining: int,
     filler: str, circuit, car, driver,
+    rain_prob: float = 0.0,
 ) -> List[TyreStint]:
     """Append stints of `filler` compound using working life per stint.
 
     The last stint is allowed to run to full life (or up to 110%) so we don't
     add a tiny trailing stint.
     """
-    full_life = adjusted_tyre_life(filler, circuit, car, driver)
-    work_life = _working_life(filler, circuit, car, driver)
+    full_life = adjusted_tyre_life(filler, circuit, car, driver, rain_prob=rain_prob)
+    work_life = _working_life(filler, circuit, car, driver, rain_prob=rain_prob)
     while remaining > 0:
         # If remaining fits within full life + 10% buffer, use remaining directly
         if remaining <= int(full_life * 1.10):
@@ -153,13 +158,13 @@ def _fill_smart(
     return stints
 
 
-def suggest_strategies(circuit, weather: str, car, driver) -> List[RaceStrategy]:
+def suggest_strategies(circuit, weather: str, car, driver, rain_prob: float = 0.0) -> List[RaceStrategy]:
     """Return 4 labelled preset strategies for the given conditions."""
     total = race_laps(circuit)
 
     if weather == "wet":
-        inter_work = _working_life("intermediate", circuit, car, driver)
-        wet_work   = _working_life("wet",          circuit, car, driver)
+        inter_work = _working_life("intermediate", circuit, car, driver, rain_prob=rain_prob)
+        wet_work   = _working_life("wet",          circuit, car, driver, rain_prob=rain_prob)
 
         inter_split = min(inter_work, total // 2)
         wet_split   = min(wet_work,   total // 2)
@@ -167,19 +172,19 @@ def suggest_strategies(circuit, weather: str, car, driver) -> List[RaceStrategy]
         return [
             # Multi-stint intermediates
             RaceStrategy(
-                stints=_fill_smart([], total, "intermediate", circuit, car, driver),
+                stints=_fill_smart([], total, "intermediate", circuit, car, driver, rain_prob=rain_prob),
                 label="Intermediates",
             ),
             # Multi-stint full wets
             RaceStrategy(
-                stints=_fill_smart([], total, "wet", circuit, car, driver),
+                stints=_fill_smart([], total, "wet", circuit, car, driver, rain_prob=rain_prob),
                 label="Full Wets",
             ),
             # Inter → Wet
             RaceStrategy(
                 stints=_fill_smart(
                     [TyreStint("intermediate", inter_split)],
-                    total - inter_split, "wet", circuit, car, driver,
+                    total - inter_split, "wet", circuit, car, driver, rain_prob=rain_prob,
                 ),
                 label="Inter → Wet",
             ),
@@ -187,7 +192,7 @@ def suggest_strategies(circuit, weather: str, car, driver) -> List[RaceStrategy]
             RaceStrategy(
                 stints=_fill_smart(
                     [TyreStint("wet", wet_split)],
-                    total - wet_split, "intermediate", circuit, car, driver,
+                    total - wet_split, "intermediate", circuit, car, driver, rain_prob=rain_prob,
                 ),
                 label="Wet → Inter",
             ),

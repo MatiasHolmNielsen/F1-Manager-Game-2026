@@ -35,6 +35,7 @@ def _show_sc_strategy_panel(
     circuit, weather: str, car, driver, driver_label: str,
     remaining_laps: int, rain_prob: float = 0.0,
     forecast: Optional[list] = None, trend: str = "stable",
+    allocation=None,
 ) -> RaceStrategy:
     return _show_pit_panel(
         circuit, car, driver, driver_label,
@@ -43,6 +44,7 @@ def _show_sc_strategy_panel(
         title="SC STRATEGY",
         context_str=f"[yellow]{remaining_laps} laps remaining[/yellow]",
         border_color="yellow",
+        allocation=allocation,
     )
 
 
@@ -137,6 +139,7 @@ def show_sc_strategy_decision(lap: int, total_laps: int, driver_infos: list) -> 
                 info["circuit_obj"], info.get("weather", "dry"),
                 info["car_obj"], info["driver_obj"], info["name"],
                 remaining, rain_prob=rain_prob, forecast=forecast, trend=trend,
+                allocation=info.get("allocation"),
             )
         else:
             decisions[info["id"]] = None
@@ -149,6 +152,7 @@ def _show_weather_strategy_panel(
     circuit, car, driver, driver_label: str,
     remaining_laps: int, rain_prob: float,
     forecast: Optional[list] = None, trend: str = "stable",
+    allocation=None,
 ) -> RaceStrategy:
     weather_for_strat = "wet" if rain_prob >= 50 else "dry"
     return _show_pit_panel(
@@ -158,6 +162,7 @@ def _show_weather_strategy_panel(
         title="WEATHER STRATEGY",
         context_str=f"[cyan]{remaining_laps} laps remaining[/cyan]",
         border_color="cyan",
+        allocation=allocation,
     )
 
 
@@ -177,13 +182,55 @@ def show_weather_strategy_decision(
     }
     title, border, subtitle = THRESHOLD_STYLES.get(threshold, ("WEATHER UPDATE", "yellow", ""))
 
-    OPTION_LABELS = {
-        "warning": ["Pit now", "Wait — recheck in 3 laps", "Dismiss weather warnings"],
-        "damp":    ["Pit now for intermediates", f"Stay out (-{_weather_compound_delta('medium', rain_prob):.1f}s/lap est.)", "Gamble on current compound"],
-        "wet":     ["Pit now (strongly advised)", "Stay out (~10s/lap penalty)", "Accept full wet penalty"],
-        "drying":  ["Pit now for dry compound", "Wait and see", "Stay on wet/inters"],
-    }
-    opts = OPTION_LABELS.get(threshold, ["Pit now", "Stay out", "Ignore"])
+    def _driver_options(compound: str) -> list:
+        """Context-aware options based on current tyre compound and threshold."""
+        penalty = _weather_compound_delta(compound, rain_prob)
+        cmp_cap = compound.capitalize()
+        if threshold == "warning":
+            return ["Pit now", "Wait — recheck in 3 laps", "Dismiss weather warnings"]
+        elif threshold == "damp":
+            if compound in ("intermediate", "wet"):
+                return [
+                    f"Change compound (on {cmp_cap})",
+                    f"Stay on {cmp_cap} (−{penalty:.1f}s/lap)",
+                    "Ignore",
+                ]
+            return [
+                "Pit for intermediates",
+                f"Stay out (−{penalty:.1f}s/lap est.)",
+                "Gamble on current compound",
+            ]
+        elif threshold == "wet":
+            if compound == "wet":
+                return [
+                    "Already on wets — change strategy",
+                    "Stay on wets (optimal)",
+                    "—",
+                ]
+            elif compound == "intermediate":
+                return [
+                    f"Switch to full wets (−{penalty:.1f}s/lap on inters now)",
+                    f"Stay on inters (−{penalty:.1f}s/lap)",
+                    "Accept inter penalty",
+                ]
+            return [
+                "Pit now — inters or wets (strongly advised)",
+                f"Stay out on {cmp_cap} (−{penalty:.1f}s/lap penalty)",
+                "Accept full wet penalty",
+            ]
+        elif threshold == "drying":
+            if compound in ("intermediate", "wet"):
+                return [
+                    "Pit for dry tyres",
+                    "Wait and see",
+                    f"Stay on {cmp_cap}",
+                ]
+            return [
+                "Stay on current compound (already on slicks)",
+                "—",
+                "—",
+            ]
+        return ["Pit now", "Stay out", "Ignore"]
 
     trend_str = {"rising": "[red]↑ rising[/red]", "falling": "[cyan]↓ falling[/cyan]", "stable": "[dim]→ stable[/dim]"}.get(trend, trend)
     header_lines = [
@@ -215,6 +262,7 @@ def show_weather_strategy_decision(
     ))
 
     tbl = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    tbl.add_column("Pos", width=4, justify="center")
     tbl.add_column("Driver", style="white")
     tbl.add_column("Tyre", justify="center")
     tbl.add_column("Age", justify="right")
@@ -225,7 +273,9 @@ def show_weather_strategy_decision(
                      "intermediate": "green", "wet": "blue"}.get(info["compound"], "white")
         penalty = _weather_compound_delta(info["compound"], min(100.0, rain_prob + 15))
         penalty_color = "red" if penalty > 3.0 else ("yellow" if penalty > 1.0 else "green")
+        pos = info.get("position", 0)
         tbl.add_row(
+            f"P{pos}" if pos else "—",
             info["name"],
             f"[{cmp_color}]{info['compound'].capitalize()}[/{cmp_color}]",
             str(info["tyre_age"]),
@@ -234,22 +284,39 @@ def show_weather_strategy_decision(
     console.print(tbl)
 
     fc_median = sorted(forecast[2:5])[1] if len(forecast) >= 5 else rain_prob
-    if fc_median > 90:
-        rec = "[bold red]PIT IMMEDIATELY[/bold red] — heavy rain certain."
-    elif fc_median > 75 and trend == "rising":
-        rec = "[bold yellow]PREPARE PIT[/bold yellow] — damp conditions likely in ~3 laps. Inters advised."
-    elif trend == "falling" and rain_prob < 70:
-        rec = "[cyan]WAIT[/cyan] — conditions may not develop. Monitor next lap."
-    elif threshold == "drying":
-        est_laps = max(1, int((rain_prob - 40) / 8))
-        rec = f"[cyan]CONSIDER SLICKS[/cyan] — track drying, est. ~{est_laps} laps to slick window."
-    else:
-        rec = "[yellow]MONITOR[/yellow] — conditions changing."
-    console.print(f"\n  Recommendation: {rec}\n")
 
     decisions: Dict[str, Optional[RaceStrategy]] = {}
     for info in driver_infos:
-        console.print(f"  [bold]{info['name']}[/bold] — Lap {info['tyre_age']} {info['compound']}")
+        compound = info["compound"]
+        penalty = _weather_compound_delta(compound, rain_prob)
+
+        # Compound-aware recommendation
+        if fc_median > 90 and compound == "intermediate":
+            rec = "[bold red]SWITCH TO WET TYRES[/bold red] — heavy rain, inters losing significant time."
+        elif fc_median > 90 and compound not in ("intermediate", "wet"):
+            rec = "[bold red]PIT IMMEDIATELY[/bold red] — heavy rain, switch to inters or wets."
+        elif fc_median > 75 and trend == "rising" and compound not in ("intermediate", "wet"):
+            rec = "[bold yellow]PREPARE PIT[/bold yellow] — conditions worsening. Inters advised in ~3 laps."
+        elif threshold == "drying" and compound in ("intermediate", "wet"):
+            est_laps = max(1, int((rain_prob - 40) / 8))
+            rec = f"[cyan]CONSIDER SLICKS[/cyan] — track drying, est. ~{est_laps} laps to slick window."
+        elif trend == "falling" and rain_prob < 70:
+            rec = "[cyan]WAIT[/cyan] — conditions may not develop. Monitor next lap."
+        elif penalty < 1.0:
+            rec = "[green]STAY OUT[/green] — current compound is well-suited to conditions."
+        else:
+            rec = "[yellow]MONITOR[/yellow] — conditions changing."
+
+        opts = _driver_options(compound)
+        cmp_color = {"soft": "red", "medium": "yellow", "hard": "white",
+                     "intermediate": "green", "wet": "blue"}.get(compound, "white")
+        pos = info.get("position", 0)
+        pos_str = f"[bold]P{pos}[/bold]  " if pos else ""
+        console.print(
+            f"\n  {pos_str}[bold]{info['name']}[/bold] — "
+            f"[{cmp_color}]{compound.capitalize()}[/{cmp_color}] age {info['tyre_age']}  "
+            f"|  Recommendation: {rec}"
+        )
         for j, label in enumerate(opts, 1):
             console.print(f"    [{j}] {label}")
         valid = [str(j) for j in range(1, len(opts) + 1)]
@@ -260,6 +327,7 @@ def show_weather_strategy_decision(
                 info["circuit_obj"], info["car_obj"], info["driver_obj"],
                 info["name"], info["laps_remaining"], rain_prob,
                 forecast=forecast, trend=trend,
+                allocation=info.get("allocation"),
             )
         else:
             decisions[info["id"]] = None

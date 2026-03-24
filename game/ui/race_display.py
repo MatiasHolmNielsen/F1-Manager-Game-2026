@@ -207,36 +207,68 @@ def show_race_events(events: List[str], max_events: int = 12, circuit=None) -> N
     ))
 
 
-def show_lap_analysis(team: Team, drivers: Dict[str, Driver], report, circuit: Circuit) -> None:
-    player_drivers = [drivers[did] for did in team.driver_ids if did in drivers]
-    if not player_drivers:
+def show_lap_analysis(
+    team: Team, drivers: Dict[str, Driver], report, circuit: Circuit,
+    player_team_id: str = "",
+) -> None:
+    # Build ordered list: player team first, then rest by finishing position
+    all_results = sorted(
+        [r for r in report.results if report.lap_data.get(r.driver.id)],
+        key=lambda r: (r.position if not r.dnf else 99),
+    )
+    player_results = [r for r in all_results if r.team_id == (player_team_id or team.id)]
+    other_results  = [r for r in all_results if r.team_id != (player_team_id or team.id)]
+    ordered = player_results + other_results
+
+    if not ordered:
         return
 
     while True:
         console.print()
-        console.print(Panel("[bold]LAP ANALYSIS[/bold]", border_style="cyan", padding=(0, 2)))
-        for i, d in enumerate(player_drivers, 1):
-            result = next((r for r in report.results if r.driver.id == d.id), None)
-            result_str = (f"DNF — {result.dnf_reason}" if result and result.dnf
-                          else (f"P{result.position}" if result else "—"))
-            laps_done = len(report.lap_data.get(d.id, []))
-            best = report.driver_fastest_laps.get(d.id)
-            best_str = fmt_lap_time(best) if best else "—"
-            console.print(f"  [{i}] {d.name}  [dim]{result_str}  •  {laps_done} laps  •  best {best_str}[/dim]")
-        console.print("  [0] Back")
-        console.print()
+        lines: List[str] = [f"[bold]LAP ANALYSIS — {circuit.name}[/bold]", ""]
 
-        choices = [str(i) for i in range(len(player_drivers) + 1)]
-        choice = Prompt.ask("Driver", choices=choices, default="0")
+        # Player team section
+        if player_results:
+            lines.append("  [bold cyan]Your Team[/bold cyan]")
+            for i, r in enumerate(player_results, 1):
+                result_str = (f"DNF — {r.dnf_reason}" if r.dnf else f"P{r.position}")
+                laps_done = len(report.lap_data.get(r.driver.id, []))
+                best = report.driver_fastest_laps.get(r.driver.id)
+                best_str = fmt_lap_time(best) if best else "—"
+                lines.append(
+                    f"  [[bold]{i}[/bold]] [bold]{r.driver.name}[/bold]"
+                    f"  [dim]{result_str}  •  {laps_done} laps  •  best {best_str}[/dim]"
+                )
+            lines.append("")
+
+        # All other drivers
+        lines.append("  [dim]All Drivers[/dim]")
+        offset = len(player_results)
+        for j, r in enumerate(other_results, offset + 1):
+            result_str = (f"DNF — {r.dnf_reason}" if r.dnf else f"P{r.position}")
+            laps_done = len(report.lap_data.get(r.driver.id, []))
+            best = report.driver_fastest_laps.get(r.driver.id)
+            best_str = fmt_lap_time(best) if best else "—"
+            lines.append(
+                f"  [[bold]{j}[/bold]] [{r.team_color}]{r.driver.name}[/{r.team_color}]"
+                f"  [dim]{result_str}  •  {r.team_name}  •  {laps_done} laps  •  best {best_str}[/dim]"
+            )
+
+        lines.append("")
+        lines.append("  [dim][0] Back[/dim]")
+        console.print(Panel("\n".join(lines), border_style="cyan", padding=(0, 2)))
+
+        choices = [str(i) for i in range(len(ordered) + 1)]
+        choice = Prompt.ask("Select driver", choices=choices, default="0")
         if choice == "0":
             break
 
-        driver = player_drivers[int(choice) - 1]
-        records = report.lap_data.get(driver.id, [])
+        selected_result = ordered[int(choice) - 1]
+        records = report.lap_data.get(selected_result.driver.id, [])
         if not records:
             console.print("[dim]No lap data available.[/dim]")
             continue
-        _show_driver_laps(driver, records, report, circuit)
+        _show_driver_laps(selected_result.driver, records, report, circuit)
 
 
 def _show_driver_laps(driver: Driver, records, report, circuit: Circuit) -> None:
