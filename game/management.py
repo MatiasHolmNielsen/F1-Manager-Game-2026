@@ -81,7 +81,7 @@ def upgrade_car_menu(team: Team) -> None:
             after_val = min(100, current_val + UPGRADE_AMOUNT)
             confirm = Prompt.ask(
                 f"Confirm: upgrade {label} from {current_val} → {after_val} for €{cost:.1f}M? (y/n)",
-                choices=["y", "n"], default="n",
+                choices=["y", "n"], default="n", case_sensitive=False,
             )
             if confirm != "y":
                 console.print("[dim]Cancelled.[/dim]")
@@ -172,7 +172,7 @@ def driver_market_menu(
             savings = old_driver.salary
             confirm = Prompt.ask(
                 f"Release [bold]{old_driver.name}[/bold] (€{savings}M saved)? This cannot be undone. (y/n)",
-                choices=["y", "n"], default="n",
+                choices=["y", "n"], default="n", case_sensitive=False,
             )
             if confirm != "y":
                 console.print("[dim]Cancelled.[/dim]")

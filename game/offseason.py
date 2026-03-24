@@ -306,7 +306,7 @@ def _player_offseason_market(
                     if released:
                         confirm = Prompt.ask(
                             f"Release [bold]{released.name}[/bold]? Cannot be undone. (y/n)",
-                            choices=["y", "n"], default="n",
+                            choices=["y", "n"], default="n", case_sensitive=False,
                         )
                         if confirm == "y":
                             team.driver_ids.pop(seat_idx)

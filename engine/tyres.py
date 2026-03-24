@@ -1,3 +1,6 @@
+"""Tyre compounds, strategy generation, and AI pit logic.
+# Functions: race_laps:51  adjusted_tyre_life:56  _tyre_score:83  _working_life:123  _fill_smart:133  suggest_strategies:155  ai_strategy:248  ai_should_pit_for_weather:275  _build_pit_schedule:285
+"""
 from __future__ import annotations
 
 import random
@@ -5,7 +8,7 @@ from dataclasses import dataclass
 from typing import Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from engine.race import RaceEntry
+    from engine.race_models import RaceEntry
 
 
 TYRE_COMPOUNDS = {
@@ -272,7 +275,7 @@ def ai_strategy(entry: RaceEntry, circuit, weather: str) -> RaceStrategy:
 
 def ai_should_pit_for_weather(state, entry, circuit, rain_prob: float, laps_remaining: int) -> bool:
     """Return True if an AI driver should pit for wet-weather tyres right now."""
-    from engine.race import _weather_compound_delta
+    from engine.weather import _weather_compound_delta
     current_penalty = _weather_compound_delta(state.tyre_compound, rain_prob)
     laps_ahead = min(laps_remaining, 15)
     expected_loss = current_penalty * laps_ahead

@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import List, TYPE_CHECKING
+from typing import List
 
-if TYPE_CHECKING:
-    from engine.race import RaceEntry
+from engine.race_models import RaceEntry
 
 
 @dataclass

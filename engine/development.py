@@ -78,7 +78,7 @@ def apply_development(
       - Rain laps driven → multiplied wet_weather XP
       - Fastest lap     → bonus pace + qualifying_pace XP
     """
-    from engine.race import RaceResult  # local import to avoid circular at module level
+    from engine.race_models import RaceResult  # noqa: F401 — ensures type is importable
 
     result_map: Dict[str, RaceResult] = {r.driver.id: r for r in results}
 
