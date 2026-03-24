@@ -31,6 +31,7 @@ def _run_offseason(
     team_pts: Dict[str, int],
     player_team_id: str,
     all_sponsors: Optional[Dict[str, Sponsor]] = None,
+    total_races: int = 22,
 ) -> bool:
     """Run off-season logic. Returns True if the player wants to continue."""
     player_team = teams[player_team_id]
@@ -177,7 +178,7 @@ def _run_offseason(
 
     # 6b. Sponsor renewal
     if all_sponsors:
-        _player_sponsor_renewal(player_team, all_sponsors)
+        _player_sponsor_renewal(player_team, all_sponsors, total_races)
 
     # 7. AI teams fill vacant seats
     free_agents = sorted(
@@ -341,6 +342,7 @@ def _player_offseason_market(
 def _player_sponsor_renewal(
     team: Team,
     all_sponsors: Dict[str, Sponsor],
+    total_races: int = 22,
 ) -> None:
     """Show sponsor renewal screen. Player keeps current sponsor or picks a new one."""
     from game.ui import show_sponsor_selection  # avoid circular import at module level
@@ -360,8 +362,7 @@ def _player_sponsor_renewal(
         # Ensure the current sponsor is always included as an option when renewing
         if current and current not in available:
             available[0] = current
-        # Use a placeholder total_races (22) for estimation — exact count loaded per season
-        selected = show_sponsor_selection(available, team, total_races=22, renewing=True)
+        selected = show_sponsor_selection(available, team, total_races=total_races, renewing=True)
         team.sponsor_id = selected.id
     else:
         console.print(f"  [green]✓ {current.name} contract renewed![/green]\n")

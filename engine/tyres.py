@@ -51,12 +51,13 @@ def race_laps(circuit) -> int:
     return round(305 / circuit.length_km)
 
 
-def adjusted_tyre_life(compound: str, circuit, car, driver) -> int:
+def adjusted_tyre_life(compound: str, circuit, car, driver, rain_prob: float = 0.0) -> int:
     """
     Return how many laps a compound lasts for this car/driver combo.
 
     Driver factor: ×0.60–×1.40  (tire_management 0–100)
     Car factor:    ×0.70–×1.30  (tire_deg 0–100)
+    Rain penalty: inters/wets degrade fast on wrong track conditions.
     """
     if compound == "intermediate":
         base = 28
@@ -64,6 +65,13 @@ def adjusted_tyre_life(compound: str, circuit, car, driver) -> int:
         base = 35
     else:
         base = TYRE_LIFE_BASE[circuit.tire_wear][compound]
+
+    # Inters on very dry track overheat and degrade fast
+    if compound == "intermediate" and rain_prob < 50:
+        base = int(base * (0.45 + rain_prob / 50 * 0.55))
+    # Wets on dry/damp track also degrade fast
+    elif compound == "wet" and rain_prob < 65:
+        base = int(base * (0.35 + rain_prob / 65 * 0.65))
 
     driver_factor = 0.6 + driver.tire_management / 100 * 0.8
     car_factor = 0.7 + car.tire_deg / 100 * 0.6
@@ -260,6 +268,16 @@ def ai_strategy(entry: RaceEntry, circuit, weather: str) -> RaceStrategy:
     # Small random nudge
     idx = max(0, min(len(strategies) - 1, idx + random.randint(-1, 1)))
     return strategies[idx]
+
+
+def ai_should_pit_for_weather(state, entry, circuit, rain_prob: float, laps_remaining: int) -> bool:
+    """Return True if an AI driver should pit for wet-weather tyres right now."""
+    from engine.race import _weather_compound_delta
+    current_penalty = _weather_compound_delta(state.tyre_compound, rain_prob)
+    laps_ahead = min(laps_remaining, 15)
+    expected_loss = current_penalty * laps_ahead
+    pit_cost = circuit.pit_lane_loss + 2.5
+    return expected_loss > pit_cost * 1.2
 
 
 def _build_pit_schedule(strategy: RaceStrategy) -> Dict[int, str]:

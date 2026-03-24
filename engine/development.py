@@ -53,8 +53,9 @@ OVERTAKE_AGG_PER     = 0.02   # per overtake → aggression XP
 DEFENSE_BONUS_PER    = 0.05   # per defense → defending XP
 # Driving on rain compounds multiplies wet_weather XP proportionally.
 WET_WEATHER_MULT     = 1.8    # full-wet race → 1.8× wet_weather XP (was 2.5 — too aggressive)
-# Cap on overtakes counted for bonus (prevents single-race stat spikes at easy overtaking tracks)
+# Cap on overtakes/defenses counted for bonus (prevents single-race stat spikes)
 OVERTAKE_BONUS_CAP   = 5
+DEFENSE_BONUS_CAP    = 5
 # Fastest lap in race boosts pace/qualifying_pace.
 FASTEST_LAP_BONUS    = {"pace": 0.20, "qualifying_pace": 0.15}
 
@@ -172,7 +173,8 @@ def apply_development(
             elif stat == "aggression" and capped_overtakes > 0:
                 perf_bonus += capped_overtakes * OVERTAKE_AGG_PER * bonus_scale
             elif stat == "defending" and defenses > 0:
-                perf_bonus += defenses * DEFENSE_BONUS_PER * bonus_scale
+                capped_defenses = min(defenses, DEFENSE_BONUS_CAP)
+                perf_bonus += capped_defenses * DEFENSE_BONUS_PER * bonus_scale
             elif stat == "wet_weather" and wet_fraction > 0:
                 # Multiply the base wet_weather XP by how wet the race was
                 raw_xp *= 1.0 + wet_fraction * (WET_WEATHER_MULT - 1.0)

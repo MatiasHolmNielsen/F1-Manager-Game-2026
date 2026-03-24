@@ -365,6 +365,8 @@ def _show_driver_laps(
         border_style="cyan", padding=(0, 2),
     ))
 
+    has_weather = report.peak_rain_prob >= 55
+
     table = Table(
         box=box.SIMPLE_HEAD, show_edge=False, header_style="bold white",
         padding=(0, 1),
@@ -377,16 +379,19 @@ def _show_driver_laps(
     table.add_column("Lap Time", width=12, justify="right")
     table.add_column("Δ Best",   width=9,  justify="right")
     table.add_column("Fuel",     width=7,  justify="right")
+    if has_weather:
+        table.add_column("Rain", width=8,  justify="right")
     table.add_column("Note",     width=14)
 
     prev_pos = None
 
     for rec in records:
         if rec.dnf:
-            table.add_row(
-                str(rec.lap), "[dim]—[/dim]", "", "", "", "",
-                "", "", "[red]RETIRED[/red]",
-            )
+            row = [str(rec.lap), "[dim]—[/dim]", "", "", "", "", "", ""]
+            if has_weather:
+                row.append("")
+            row.append("[red]RETIRED[/red]")
+            table.add_row(*row)
             break
 
         info    = TYRE_COMPOUNDS[rec.compound]
@@ -444,11 +449,27 @@ def _show_driver_laps(
         else:
             note = ""
 
-        table.add_row(
-            str(rec.lap), pos_str, tyre_str,
-            str(rec.tyre_age), wear_str,
-            lap_str, delta_str, fuel_str, note,
-        )
+        if has_weather:
+            rp = rec.rain_prob
+            if rp >= 92:
+                rain_str = f"[blue]{rp:.0f}%[/blue]"
+            elif rp >= 65:
+                rain_str = f"[cyan]{rp:.0f}%[/cyan]"
+            elif rp >= 45:
+                rain_str = f"[dim cyan]{rp:.0f}%[/dim cyan]"
+            else:
+                rain_str = f"[dim]{rp:.0f}%[/dim]"
+            table.add_row(
+                str(rec.lap), pos_str, tyre_str,
+                str(rec.tyre_age), wear_str,
+                lap_str, delta_str, fuel_str, rain_str, note,
+            )
+        else:
+            table.add_row(
+                str(rec.lap), pos_str, tyre_str,
+                str(rec.tyre_age), wear_str,
+                lap_str, delta_str, fuel_str, note,
+            )
 
     console.print(table)
     console.input("\n[dim]Press Enter to go back…[/dim]")
@@ -951,6 +972,17 @@ def _custom_strategy(weather: str, total_laps: int, circuit, car, driver) -> Rac
             console.print("[red]You must use at least 2 different compounds in dry conditions. Try again.[/red]")
             continue
 
+        # Hard validation: last stint must not exceed 150% of tyre life
+        last = stints[-1]
+        last_life = adjusted_tyre_life(last.compound, circuit, car, driver)
+        if last.laps > last_life * 1.5:
+            console.print(
+                f"[red]✗ Strategy rejected: last stint ({last.laps} laps on {last.compound}, "
+                f"life ~{last_life}L) would destroy the tyre before the finish. "
+                f"Maximum is {int(last_life * 1.5)} laps. Try again.[/red]"
+            )
+            continue
+
         return RaceStrategy(stints=stints, label="Custom")
 
 
@@ -1160,6 +1192,7 @@ def show_race_transition(
     season_poles: int = 0,
     season_fastest_laps: int = 0,
     season_podiums: int = 0,
+    race_report: Optional[RaceReport] = None,
 ) -> None:
     """Debrief panel after standings; previews the next race."""
     # ── Section A: Race debrief ──────────────────────────────────────────────
@@ -1211,6 +1244,13 @@ def show_race_transition(
     ]
     if notable:
         debrief_lines.append(f"[dim]Notable:[/dim]      {notable}")
+    if race_report and race_report.peak_rain_prob >= 65 and race_report.weather_summary:
+        # Show the most significant weather event
+        weather_evt = race_report.weather_summary[-1] if race_report.weather_summary else ""
+        debrief_lines.append(
+            f"[dim]Weather:[/dim]      [blue]{weather_evt}[/blue]  "
+            f"[dim](peak {race_report.peak_rain_prob:.0f}%)[/dim]"
+        )
     debrief_lines.append(
         f"[dim]Season so far: {season_poles} pole{'s' if season_poles != 1 else ''}  ·  "
         f"{season_fastest_laps} fastest lap{'s' if season_fastest_laps != 1 else ''}  ·  "
@@ -1355,11 +1395,29 @@ def show_sc_strategy_decision(lap: int, total_laps: int, driver_infos: list) -> 
     """Prompt the player for each driver: stay out or pit and choose full remaining strategy."""
     console.print()
     remaining = total_laps - lap
+    sc_type = driver_infos[0].get("sc_type", "SC") if driver_infos else "SC"
+    sc_laps_rem = driver_infos[0].get("sc_laps_remaining", 3) if driver_infos else 3
+    rain_prob = driver_infos[0].get("rain_prob", 0.0) if driver_infos else 0.0
+    forecast  = driver_infos[0].get("forecast", []) if driver_infos else []
+    trend     = driver_infos[0].get("trend", "stable") if driver_infos else "stable"
+
     console.print(Panel(
-        f"[bold yellow]  SAFETY CAR — LAP {lap} of {total_laps}  ({remaining} laps left)[/bold yellow]",
+        f"[bold yellow]  {sc_type} — LAP {lap} of {total_laps}  ({remaining} laps left · {sc_type} ends ~{sc_laps_rem} laps)[/bold yellow]",
         border_style="yellow",
         expand=False,
     ))
+
+    # Weather forecast block — only shown when rain is a factor
+    if rain_prob >= 45 or any(fp >= 45 for fp in forecast[:8]):
+        trend_str = {"rising": "[red]↑ rising[/red]", "falling": "[cyan]↓ falling[/cyan]", "stable": "[dim]→ stable[/dim]"}.get(trend, trend)
+        wx_lines = [
+            f"  Rain: {_rain_bar(rain_prob, 10)}  ({trend_str})",
+            "  Forecast (next 8 laps):",
+        ]
+        for i, fp in enumerate(forecast[:8]):
+            wx_lines.append(f"    L{lap + i + 1:<3} {_rain_bar(fp, 8)}")
+        wx_lines.append("  [dim]Forecast: reliable 1–3 laps, less certain beyond[/dim]")
+        console.print(Panel("\n".join(wx_lines), border_style="cyan", padding=(0, 1), expand=False))
 
     table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
     table.add_column("Driver", style="white")
@@ -1367,6 +1425,8 @@ def show_sc_strategy_decision(lap: int, total_laps: int, driver_infos: list) -> 
     table.add_column("Tyre", justify="center")
     table.add_column("Age", justify="right")
     table.add_column("Tyre life left", justify="right")
+    table.add_column("Gap fwd", justify="right")
+    table.add_column("Gap bck", justify="right")
     table.add_column("Rec", justify="center")
 
     recommendations: Dict[str, bool] = {}
@@ -1378,15 +1438,52 @@ def show_sc_strategy_decision(lap: int, total_laps: int, driver_infos: list) -> 
         rec_str = "[green]PIT[/green]" if rec_pit else "[dim]STAY[/dim]"
         cmp_color = {"soft": "red", "medium": "yellow", "hard": "white",
                      "intermediate": "green", "wet": "blue"}.get(info["compound"], "white")
+
+        gap_ahead = info.get("gap_ahead")
+        gap_behind = info.get("gap_behind")
+
+        if gap_ahead is None:
+            gap_fwd_str = "[dim]—[/dim]"
+        elif gap_ahead < 2.0:
+            gap_fwd_str = f"[red]{gap_ahead:.1f}s[/red]"
+        elif gap_ahead > 5.0:
+            gap_fwd_str = f"[green]{gap_ahead:.1f}s[/green]"
+        else:
+            gap_fwd_str = f"{gap_ahead:.1f}s"
+
+        if gap_behind is None:
+            gap_bck_str = "[dim]—[/dim]"
+        elif gap_behind < 2.0:
+            gap_bck_str = f"[red]{gap_behind:.1f}s[/red]"
+        elif gap_behind > 5.0:
+            gap_bck_str = f"[green]{gap_behind:.1f}s[/green]"
+        else:
+            gap_bck_str = f"{gap_behind:.1f}s"
+
         table.add_row(
             info["name"],
             f"P{info['position']}",
             f"[{cmp_color}]{info['compound'].capitalize()}[/{cmp_color}]",
             str(info["tyre_age"]),
             f"~{life_left} laps",
+            gap_fwd_str,
+            gap_bck_str,
             rec_str,
         )
     console.print(table)
+
+    # Strategic notes
+    for info in driver_infos:
+        gap_behind = info.get("gap_behind")
+        gap_ahead = info.get("gap_ahead")
+        if gap_behind is not None and gap_behind < 2.0:
+            console.print(
+                f"[yellow]⚠ {info['name']}: car behind is {gap_behind:.1f}s back — may jump you if they pit[/yellow]"
+            )
+        elif gap_ahead is not None and gap_ahead > 5.0:
+            console.print(
+                f"[green]{info['name']}: comfortable gap ahead — pitting won't cost position[/green]"
+            )
 
     decisions: Dict[str, Optional[RaceStrategy]] = {}
     for info in driver_infos:
@@ -1415,6 +1512,199 @@ def show_sc_strategy_decision(lap: int, total_laps: int, driver_infos: list) -> 
     return decisions
 
 
+def _rain_bar(prob: float, width: int = 10) -> str:
+    """Render a rain probability as a coloured bar with percentage and threshold marker."""
+    filled = round(prob / 100 * width)
+    filled = max(0, min(width, filled))
+    color = "blue" if prob >= 65 else ("cyan" if prob >= 45 else "dim")
+    bar = "█" * filled + "░" * (width - filled)
+    marker = ""
+    if prob >= 92:
+        marker = " [dim]← wet[/dim]"
+    elif prob >= 65:
+        marker = " [dim]← damp[/dim]"
+    return f"[{color}]{bar}[/{color}] {prob:.0f}%{marker}"
+
+
+def _show_weather_strategy_panel(
+    circuit,
+    car,
+    driver,
+    driver_label: str,
+    remaining_laps: int,
+    rain_prob: float,
+) -> RaceStrategy:
+    """Show compound options for a mid-race weather pit and return chosen strategy."""
+    # Show wet-weather compounds whenever rain is meaningful (warning fires at 55%).
+    # Only fall back to dry compounds if rain_prob is low (drying phase).
+    is_wet_cond = rain_prob >= 50
+    weather_for_strat = "wet" if is_wet_cond else "dry"
+
+    presets_full = suggest_strategies(circuit, weather_for_strat, car, driver)
+    presets = [_trim_strategy_to_remaining(p, remaining_laps) for p in presets_full]
+
+    lines: List[str] = []
+    lines.append(
+        f"[bold]WEATHER STRATEGY[/bold] — {circuit.name}  [dim]({driver_label})[/dim]"
+        f"  [cyan]{remaining_laps} laps remaining[/cyan]"
+    )
+    lines.append("")
+    if is_wet_cond:
+        inter_life = adjusted_tyre_life("intermediate", circuit, car, driver)
+        wet_life   = adjusted_tyre_life("wet", circuit, car, driver)
+        if rain_prob < 65:
+            lines.append(f"  [green]I[/green] Intermediate — ~{inter_life} laps  [dim]← optimal for current conditions[/dim]")
+            lines.append(f"  [blue]W[/blue] Wet          — ~{wet_life} laps  [dim](rain_prob must reach 82%+)[/dim]")
+        elif rain_prob < 82:
+            lines.append(f"  [green]I[/green] Intermediate — ~{inter_life} laps  [dim]← optimal for current conditions[/dim]")
+            lines.append(f"  [blue]W[/blue] Wet          — ~{wet_life} laps  [dim](consider if rain_prob exceeds 82%)[/dim]")
+        else:
+            lines.append(f"  [green]I[/green] Intermediate — ~{inter_life} laps")
+            lines.append(f"  [blue]W[/blue] Wet          — ~{wet_life} laps  [dim]← optimal for current conditions[/dim]")
+    else:
+        for cmp, sym, col in [("hard", "H", "white"), ("medium", "M", "yellow"), ("soft", "S", "red")]:
+            life = adjusted_tyre_life(cmp, circuit, car, driver)
+            lines.append(f"  [{col}]{sym}[/{col}] {cmp.capitalize():<12} — ~{life} laps")
+    lines.append("")
+    lines.append("Preset strategies:")
+    for i, preset in enumerate(presets):
+        lines.append(f"  [[bold]{i + 1}[/bold]] {preset.label:<16} {_fmt_strategy(preset)}")
+    custom_num = len(presets) + 1
+    lines.append(f"  [[bold]{custom_num}[/bold]] Custom — choose compounds manually")
+
+    console.print()
+    console.print(Panel("\n".join(lines), border_style="cyan", padding=(0, 2)))
+
+    valid_choices = [str(i + 1) for i in range(len(presets))] + [str(custom_num)]
+    choice = Prompt.ask("Strategy", choices=valid_choices)
+    choice_idx = int(choice) - 1
+    if choice_idx < len(presets):
+        return presets[choice_idx]
+    return _custom_strategy(weather_for_strat, remaining_laps, circuit, car, driver)
+
+
+def show_weather_strategy_decision(
+    lap: int,
+    total_laps: int,
+    threshold: str,
+    driver_infos: list,
+    rain_prob: float,
+    forecast: list,
+    trend: str,
+    meta: Optional[dict] = None,
+) -> dict:
+    """Show mid-race weather prompt and return per-driver pit decisions."""
+    console.print()
+    remaining = total_laps - lap
+
+    THRESHOLD_STYLES = {
+        "warning": ("WEATHER WARNING",       "yellow",      "Conditions approaching change"),
+        "damp":    ("TRACK TURNING DAMP",    "bold yellow", "Intermediates now faster than slicks"),
+        "wet":     ("HEAVY RAIN",            "blue",        "Wet tyres strongly advised"),
+        "drying":  ("TRACK DRYING",          "cyan",        "Slick tyres becoming viable"),
+    }
+    title, border, subtitle = THRESHOLD_STYLES.get(threshold, ("WEATHER UPDATE", "yellow", ""))
+
+    OPTION_LABELS = {
+        "warning": ["Pit now", "Wait — recheck in 3 laps", "Dismiss weather warnings"],
+        "damp":    ["Pit now for intermediates", f"Stay out (-{_weather_compound_delta_approx(rain_prob):.1f}s/lap est.)", "Gamble on current compound"],
+        "wet":     ["Pit now (strongly advised)", "Stay out (~10s/lap penalty)", "Accept full wet penalty"],
+        "drying":  ["Pit now for dry compound", "Wait and see", "Stay on wet/inters"],
+    }
+    opts = OPTION_LABELS.get(threshold, ["Pit now", "Stay out", "Ignore"])
+
+    # Header panel
+    trend_str = {"rising": "[red]↑ rising[/red]", "falling": "[cyan]↓ falling[/cyan]", "stable": "[dim]→ stable[/dim]"}.get(trend, trend)
+    header_lines = [
+        f"[bold]{subtitle}[/bold]",
+        "",
+        f"  Rain probability: {_rain_bar(rain_prob, 10)}  ({trend_str})",
+        "",
+        "  Forecast — next 8 laps:",
+    ]
+    for i, fp in enumerate(forecast[:8]):
+        lap_n = lap + i + 1
+        header_lines.append(f"    L{lap_n:<3} {_rain_bar(fp, 10)}")
+    header_lines.append("")
+    header_lines.append(
+        f"  [dim]Forecast reliability: high 1–3 laps, moderate 4–6, low beyond[/dim]"
+    )
+
+    console.print(Panel(
+        "\n".join(header_lines),
+        title=f"[bold]  {title} — LAP {lap} of {total_laps}  ({remaining} laps left)  [/bold]",
+        border_style=border,
+        padding=(0, 1),
+    ))
+
+    # Driver table with compound penalty estimate
+    tbl = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    tbl.add_column("Driver", style="white")
+    tbl.add_column("Tyre", justify="center")
+    tbl.add_column("Age", justify="right")
+    tbl.add_column("Penalty if rain+15%", justify="right", min_width=20)
+
+    from engine.race import _weather_compound_delta
+    for info in driver_infos:
+        cmp_color = {"soft": "red", "medium": "yellow", "hard": "white",
+                     "intermediate": "green", "wet": "blue"}.get(info["compound"], "white")
+        penalty_prob = min(100.0, rain_prob + 15)
+        penalty = _weather_compound_delta(info["compound"], penalty_prob)
+        penalty_color = "red" if penalty > 3.0 else ("yellow" if penalty > 1.0 else "green")
+        tbl.add_row(
+            info["name"],
+            f"[{cmp_color}]{info['compound'].capitalize()}[/{cmp_color}]",
+            str(info["tyre_age"]),
+            f"[{penalty_color}]-{penalty:.1f}s/lap[/{penalty_color}]",
+        )
+    console.print(tbl)
+
+    # Recommendation
+    fc_median = sorted(forecast[2:5])[1] if len(forecast) >= 5 else rain_prob
+    if fc_median > 90:
+        rec = "[bold red]PIT IMMEDIATELY[/bold red] — heavy rain certain."
+    elif fc_median > 75 and trend == "rising":
+        rec = "[bold yellow]PREPARE PIT[/bold yellow] — damp conditions likely in ~3 laps. Inters advised."
+    elif trend == "falling" and rain_prob < 70:
+        rec = "[cyan]WAIT[/cyan] — conditions may not develop. Monitor next lap."
+    elif threshold == "drying":
+        est_laps = max(1, int((rain_prob - 40) / 8))
+        rec = f"[cyan]CONSIDER SLICKS[/cyan] — track drying, est. ~{est_laps} laps to slick window."
+    else:
+        rec = "[yellow]MONITOR[/yellow] — conditions changing."
+    console.print(f"\n  Recommendation: {rec}\n")
+
+    # Per-driver decisions
+    decisions: Dict[str, Optional[RaceStrategy]] = {}
+    for info in driver_infos:
+        console.print(f"  [bold]{info['name']}[/bold] — Lap {info['tyre_age']} {info['compound']}")
+        for j, label in enumerate(opts, 1):
+            console.print(f"    [{j}] {label}")
+        valid = [str(j) for j in range(1, len(opts) + 1)]
+        choice = Prompt.ask("    Choice", choices=valid, default="2")
+
+        if choice == "1":
+            strat = _show_weather_strategy_panel(
+                info["circuit_obj"], info["car_obj"], info["driver_obj"],
+                info["name"], info["laps_remaining"], rain_prob,
+            )
+            decisions[info["id"]] = strat
+        else:
+            decisions[info["id"]] = None
+            # Meta signals for warning threshold
+            if threshold == "warning" and choice == "3" and meta is not None:
+                meta["ignored_warning"] = True
+
+    console.print()
+    return decisions
+
+
+def _weather_compound_delta_approx(rain_prob: float) -> float:
+    """Quick estimate of slick tyre penalty at current rain_prob (for UI labels)."""
+    from engine.race import _weather_compound_delta
+    return _weather_compound_delta("medium", rain_prob)
+
+
 def run_race_with_animation(
     entries: List[RaceEntry],
     circuit: Circuit,
@@ -1427,11 +1717,17 @@ def run_race_with_animation(
     def _sc_callback(lap, total_laps, driver_infos):
         return show_sc_strategy_decision(lap, total_laps, driver_infos)
 
+    def _weather_callback(lap, total_laps, threshold, driver_infos, rain_prob, forecast, trend, meta=None):
+        return show_weather_strategy_decision(
+            lap, total_laps, threshold, driver_infos, rain_prob, forecast, trend, meta
+        )
+
     report = simulate_race(
         entries, circuit, weather,
         grid=grid, strategies=strategies,
         player_team_id=player_team_id,
         sc_pit_callback=_sc_callback,
+        weather_callback=_weather_callback,
     )
     total_steps = 20
     total_laps = race_laps(circuit)
@@ -1462,16 +1758,28 @@ def run_race_with_animation(
             time.sleep(0.08)
             progress.advance(task, 1)
             for event in bucketed.get(step, []):
-                if "SAFETY CAR" in event or "VIRTUAL SAFETY CAR" in event:
+                if "HEAVY RAIN" in event:
+                    styled = f"[bold blue]  🌧  {event}[/bold blue]"
+                elif "SAFETY CAR" in event or "VIRTUAL SAFETY CAR" in event:
                     styled = f"[bold yellow]  SC  {event}[/bold yellow]"
                 elif "Racing resumes" in event:
                     styled = f"[bold green]  GO  {event}[/bold green]"
+                elif "TRACK TURNING DAMP" in event or "Track turning damp" in event:
+                    styled = f"[blue]  ~   {event}[/blue]"
+                elif "TRACK DRYING" in event or "Track drying" in event:
+                    styled = f"[yellow]  ☀  {event}[/yellow]"
+                elif "Rain easing" in event:
+                    styled = f"[dim cyan]  ~   {event}[/dim cyan]"
+                elif "Weather front" in event or "Weather:" in event:
+                    styled = f"[dim blue]  ~   {event}[/dim blue]"
                 elif "retires" in event or "collision" in event.lower():
                     styled = f"[red]  !!  {event}[/red]"
                 elif "overtakes" in event:
                     styled = f"[cyan]  ^   {event}[/cyan]"
                 elif "pits under SC" in event:
                     styled = f"[yellow]  P   {event}[/yellow]"
+                elif "pits for weather" in event:
+                    styled = f"[cyan]  P   {event}[/cyan]"
                 elif "pits" in event:
                     styled = f"[dim]  P   {event}[/dim]"
                 elif "damage" in event:
@@ -1496,7 +1804,9 @@ def show_sponsor_selection(
     console.print(Panel(title, border_style="cyan", padding=(0, 2)))
 
     if renewing and player_team.sponsor_id:
-        console.print(f"  Current sponsor: [bold cyan]{player_team.sponsor_id.replace('_', ' ').title()}[/bold cyan]\n")
+        current_sp = next((sp for sp in available_sponsors if sp.id == player_team.sponsor_id), None)
+        current_name = current_sp.name if current_sp else player_team.sponsor_id.replace('_', ' ').title()
+        console.print(f"  Current sponsor: [bold cyan]{current_name}[/bold cyan]\n")
 
     BONUS_LABELS = {
         "none": "—",

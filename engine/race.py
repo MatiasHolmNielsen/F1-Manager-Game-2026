@@ -51,6 +51,97 @@ def _check_safety_car() -> Optional[str]:
     return None
 
 
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def _weather_compound_delta(compound: str, rain_prob: float) -> float:
+    """Per-lap pace delta (seconds) for a compound at the current track wetness."""
+    from engine.tyres import COMPOUND_PACE_DELTA
+    base = COMPOUND_PACE_DELTA.get(compound, 0.0)
+
+    if compound in ("soft", "medium", "hard"):
+        if rain_prob <= 55:
+            return base
+        elif rain_prob <= 65:
+            t = (rain_prob - 55) / 10
+            return base + _lerp(0.0, 2.0, t)
+        elif rain_prob <= 80:
+            t = (rain_prob - 65) / 15
+            return base + _lerp(2.0, 5.0, t)
+        elif rain_prob <= 92:
+            t = (rain_prob - 80) / 12
+            return base + _lerp(5.0, 9.0, t)
+        else:
+            t = (rain_prob - 92) / 8
+            return base + _lerp(9.0, 12.5, t)
+
+    elif compound == "intermediate":
+        if rain_prob <= 40:
+            return 6.0
+        elif rain_prob <= 65:
+            t = (rain_prob - 40) / 25
+            return _lerp(6.0, 0.2, t)
+        elif rain_prob <= 92:
+            return 0.2
+        else:
+            t = (rain_prob - 92) / 8
+            return _lerp(0.2, 2.7, t)
+
+    elif compound == "wet":
+        if rain_prob <= 55:
+            return 12.0
+        elif rain_prob <= 70:
+            t = (rain_prob - 55) / 15
+            return _lerp(12.0, 3.0, t)
+        elif rain_prob <= 82:
+            t = (rain_prob - 70) / 12
+            return _lerp(3.0, 0.8, t)
+        else:
+            return 0.8
+
+    return base
+
+
+def _effective_wet_weight(rain_prob: float) -> float:
+    """Scale wet_weather stat weight from 0 → 0.85 as rain_prob rises 40 → 100."""
+    if rain_prob <= 40:
+        return 0.0
+    elif rain_prob <= 65:
+        t = (rain_prob - 40) / 25
+        return _lerp(0.0, 0.30, t)
+    elif rain_prob <= 80:
+        t = (rain_prob - 65) / 15
+        return _lerp(0.30, 0.60, t)
+    else:
+        t = min(1.0, (rain_prob - 80) / 20)
+        return _lerp(0.60, 0.85, t)
+
+
+def _generate_weather_forecast(
+    rain_prob: float,
+    rain_decreasing: bool,
+    rise_rate: float,
+    decay_rate: float,
+    front_arrival_lap: int,
+    current_lap: int,
+) -> List[float]:
+    """Simulate next 8 laps of rain probability with increasing uncertainty."""
+    noise_by_offset = [5, 5, 12, 12, 12, 20, 20, 20]
+    forecast: List[float] = []
+    prob = rain_prob
+    for i in range(8):
+        if rain_decreasing:
+            rate = decay_rate
+            prob = max(0.0, prob - max(0.0, random.gauss(rate, rate * 0.3)))
+        elif current_lap + i >= front_arrival_lap and rise_rate > 0:
+            rate = rise_rate
+            prob = min(100.0, prob + max(0.0, random.gauss(rate, rate * 0.35)))
+        noise = random.gauss(0, noise_by_offset[i])
+        forecast.append(max(0.0, min(100.0, prob + noise)))
+    return forecast
+
+
 @dataclass
 class RaceEntry:
     driver: Driver
@@ -99,6 +190,7 @@ class DriverLapRecord:
     position: int         # position after the lap (0 = DNF on this lap)
     pitted: bool = False  # pitted at the end of this lap
     dnf: bool = False     # retired on this lap
+    rain_prob: float = 0.0  # track wetness on this lap (0–100)
 
 
 @dataclass
@@ -124,11 +216,13 @@ class RaceReport:
     lap_data: Dict[str, List[DriverLapRecord]] = field(default_factory=dict)  # did -> per-lap records
     overtakes_made: Dict[str, int] = field(default_factory=dict)   # did -> successful overtakes
     defenses_made: Dict[str, int] = field(default_factory=dict)    # did -> successful defenses
+    peak_rain_prob: float = 0.0          # highest rain_prob reached during the race
+    weather_summary: List[str] = field(default_factory=list)  # key weather events for debrief
 
 
 # ─── Lap simulation helpers ────────────────────────────────────────────────────
 
-def _base_lap_time(entry: RaceEntry, circuit, weather: str) -> float:
+def _base_lap_time(entry: RaceEntry, circuit, rain_prob: float) -> float:
     """Base lap time for this driver/car at this circuit, without fuel/tyre/noise."""
     driver = entry.driver
     car = entry.car
@@ -145,10 +239,8 @@ def _base_lap_time(entry: RaceEntry, circuit, weather: str) -> float:
         + car.mechanical_grip * mech_w   * 0.15
     ) * 0.048
 
-    if weather == "wet":
-        eff_pace = driver.pace * 0.15 + driver.wet_weather * 0.85
-    else:
-        eff_pace = driver.pace
+    wet_w = _effective_wet_weight(rain_prob)
+    eff_pace = driver.pace * (1.0 - wet_w) + driver.wet_weather * wet_w
 
     driver_delta = -(
         eff_pace             * 0.40
@@ -253,6 +345,7 @@ def simulate_race(
     strategies: Optional[Dict[str, RaceStrategy]] = None,
     player_team_id: Optional[str] = None,
     sc_pit_callback: Optional[Callable] = None,
+    weather_callback: Optional[Callable] = None,
 ) -> RaceReport:
     """Simulate a full race lap-by-lap and return a RaceReport."""
     total_laps = race_laps(circuit)
@@ -306,17 +399,110 @@ def simulate_race(
     lap_data: Dict[str, List[DriverLapRecord]] = {did: [] for did in entry_map}
     overtakes_made: Dict[str, int] = {did: 0 for did in entry_map}
     defenses_made: Dict[str, int] = {did: 0 for did in entry_map}
+    prev_positions: Dict[str, int] = {did: grid_pos(did) for did in entry_map}
+    pit_recovery_laps_left: Dict[str, int] = {did: 0 for did in entry_map}
 
     # ── Safety Car state ─────────────────────────────────────────────────────
     sc_state: Optional[str] = None   # "SC", "VSC", or None
     sc_laps_remaining: int = 0
     sc_lap_count: int = 0             # laps elapsed since SC/VSC deployed (0 = deployment lap)
 
+    # ── Weather state ─────────────────────────────────────────────────────────
+    rain_prob: float = 85.0 if weather == "wet" else 0.0
+    front_active: bool = False
+    front_arrival_lap: int = 0
+    front_rise_rate: float = 0.0
+    front_decay_rate: float = 0.0
+    peak_duration: int = 0
+    laps_above_peak: int = 0
+    rain_decreasing: bool = False
+    peak_rain_prob: float = rain_prob
+    weather_summary: List[str] = []
+    episode_below_60_count: int = 0
+    thresholds_crossed: dict = {"warning": False, "damp": False, "wet": False, "drying": False}
+    player_ignored_warning: bool = False
+    weather_sc_fired: bool = False
+    warning_cooldown: int = 0   # laps until warning threshold can fire again
+
+    if weather == "dry" and random.random() * 100 < circuit.weather_chance:
+        earliest = max(3, int(total_laps * 0.15))
+        latest   = max(earliest + 1, min(total_laps - 5, int(total_laps * 0.85)))
+        front_arrival_lap = random.randint(earliest, latest)
+        strength = random.choices(["light", "moderate", "heavy"], weights=[40, 40, 20])[0]
+        rise_rates   = {"light": 5.5, "moderate": 10.0, "heavy": 17.0}
+        decay_rates  = {"light": 5.0, "moderate": 7.0,  "heavy": 6.0}
+        peak_durations = {"light": 5, "moderate": 8,  "heavy": 12}
+        front_rise_rate  = rise_rates[strength]
+        front_decay_rate = decay_rates[strength]
+        peak_duration    = peak_durations[strength]
+        front_active = True
+        events.append(f"Weather: {strength} rain front expected around lap {front_arrival_lap}")
+
+    if weather == "wet":
+        if random.random() < 0.50:
+            dry_start = max(3, total_laps // 4)
+            dry_end   = max(dry_start + 1, total_laps - 5)
+            front_arrival_lap = random.randint(dry_start, dry_end)
+            front_decay_rate  = random.uniform(4.0, 8.0)
+            rain_decreasing   = True
+            front_active      = True
+
     # ── Lap-by-lap simulation ────────────────────────────────────────────────
     for lap in range(1, total_laps + 1):
         lap_times: Dict[str, float] = {}   # did -> this lap's raw time (excludes pit time)
         lap_snapshots: Dict[str, dict] = {}  # temporary per-lap data before position is known
         lap_had_incident: bool = False
+
+        # ── Per-lap weather drift ────────────────────────────────────────────
+        prev_lap_rain_prob = rain_prob
+        if warning_cooldown > 0:
+            warning_cooldown -= 1
+
+        if front_active:
+            if not rain_decreasing and lap >= front_arrival_lap:
+                delta = max(0.0, random.gauss(front_rise_rate, front_rise_rate * 0.35))
+                rain_prob = min(100.0, rain_prob + delta)
+                if rain_prob > peak_rain_prob:
+                    peak_rain_prob = rain_prob
+                if rain_prob >= 80:
+                    laps_above_peak += 1
+                    if laps_above_peak >= peak_duration:
+                        rain_decreasing = True
+                else:
+                    laps_above_peak = 0
+            elif rain_decreasing:
+                if not (weather == "wet" and lap < front_arrival_lap):
+                    delta = max(0.0, random.gauss(front_decay_rate, front_decay_rate * 0.3))
+                    rain_prob = max(0.0, rain_prob - delta)
+
+        # Track episode reset (below 60 for 3+ laps resets thresholds for next episode)
+        if rain_prob < 60:
+            episode_below_60_count += 1
+            if episode_below_60_count >= 3 and any(thresholds_crossed.values()):
+                thresholds_crossed = {k: False for k in thresholds_crossed}
+                player_ignored_warning = False
+                weather_sc_fired = False
+        else:
+            episode_below_60_count = 0
+
+        # Emit weather event strings
+        if front_active:
+            if rain_prob >= 55 and prev_lap_rain_prob < 55:
+                events.append(f"Lap {lap}: Weather front approaching — rain possible")
+                weather_summary.append(f"Lap {lap}: Weather front approaching")
+            elif rain_prob >= 65 and prev_lap_rain_prob < 65:
+                events.append(f"Lap {lap}: Track turning damp — conditions deteriorating")
+                weather_summary.append(f"Lap {lap}: Track turning damp")
+            elif rain_prob >= 92 and prev_lap_rain_prob < 92:
+                events.append(f"Lap {lap}: HEAVY RAIN — standing water on track")
+                weather_summary.append(f"Lap {lap}: HEAVY RAIN")
+            if rain_decreasing:
+                if rain_prob < 70 and prev_lap_rain_prob >= 70:
+                    events.append(f"Lap {lap}: Rain easing — conditions improving")
+                    weather_summary.append(f"Lap {lap}: Rain easing")
+                elif rain_prob < 55 and prev_lap_rain_prob >= 55:
+                    events.append(f"Lap {lap}: Track drying — slick tyres becoming viable")
+                    weather_summary.append(f"Lap {lap}: Track drying")
 
         for did, state in states.items():
             if state.dnf:
@@ -351,12 +537,13 @@ def simulate_race(
                     continue
 
             # ── Compute lap time ────────────────────────────────────────
-            base = _base_lap_time(entry, circuit, weather)
+            base = _base_lap_time(entry, circuit, rain_prob)
 
             fuel_delta = (state.fuel_load / 100.0) * 2.8
 
             wear_frac = min(1.0, state.tyre_age / max(1, life))
-            tyre_delta = wear_frac ** 2 * 4.5 + COMPOUND_PACE_DELTA[state.tyre_compound]
+            compound_delta = _weather_compound_delta(state.tyre_compound, rain_prob)
+            tyre_delta = wear_frac ** 2 * 4.5 + compound_delta
 
             stability = (driver.consistency + driver.mental) / 200.0
             lap_sigma = 0.25 * (1.0 + (1.0 - stability))
@@ -397,6 +584,7 @@ def simulate_race(
                 "wear_pct": round(wear_frac * 100, 1),
                 "fuel_load": round(state.fuel_load, 1),
                 "pitted": False,
+                "rain_prob": rain_prob,
             }
 
             # ── Update fuel & tyre age ──────────────────────────────────
@@ -416,6 +604,7 @@ def simulate_race(
                 state.tyre_compound = next_compound
                 state.stint_index += 1
                 state.pit_this_lap = True
+                pit_recovery_laps_left[did] = 2
                 if did in lap_snapshots:
                     lap_snapshots[did]["pitted"] = True
                 pit_stop_log.append(PitStop(
@@ -443,9 +632,27 @@ def simulate_race(
                 events.append(f"Lap {lap}: SAFETY CAR DEPLOYED")
             elif deployed == "VSC":
                 sc_state = "VSC"
-                sc_laps_remaining = random.randint(2, 3)
+                sc_laps_remaining = random.randint(3, 5)
                 sc_lap_count = 0
                 events.append(f"Lap {lap}: VIRTUAL SAFETY CAR DEPLOYED")
+
+        # ── Weather-triggered Safety Car ──────────────────────────────
+        if sc_state is None and not weather_sc_fired and lap < total_laps - 3:
+            rain_delta_this_lap = rain_prob - prev_lap_rain_prob
+            if rain_delta_this_lap > 15:
+                if random.random() < 0.30:
+                    sc_state = "SC"
+                    sc_laps_remaining = random.randint(3, 5)
+                    sc_lap_count = 0
+                    weather_sc_fired = True
+                    events.append(f"Lap {lap}: SAFETY CAR — sudden heavy rain")
+            elif rain_prob > 90 and prev_lap_rain_prob <= 90:
+                if random.random() < 0.35:
+                    sc_state = "SC"
+                    sc_laps_remaining = random.randint(3, 5)
+                    sc_lap_count = 0
+                    weather_sc_fired = True
+                    events.append(f"Lap {lap}: SAFETY CAR — aquaplaning risk")
 
         if sc_state is not None:
             active_sc = [d for d, s in states.items() if not s.dnf]
@@ -489,15 +696,29 @@ def simulate_race(
             else:  # VSC
                 ai_pit_prob = [0.20, 0.10][min(sc_lap_count, 1)]
 
-            # Resolve player decisions via callback if provided
+            # Resolve player decisions via callback if provided (first SC lap only)
             sc_decisions: Dict[str, Optional[RaceStrategy]] = {}
-            if sc_pit_callback and player_team_id:
+            if sc_pit_callback and player_team_id and sc_lap_count == 0:
                 player_infos = []
                 pos_lookup = {did: pos + 1 for pos, did in enumerate(active_sc)}
+                sc_forecast = _generate_weather_forecast(
+                    rain_prob, rain_decreasing, front_rise_rate, front_decay_rate,
+                    front_arrival_lap, lap,
+                )
+                sc_trend = "falling" if rain_decreasing else ("rising" if (not rain_decreasing and lap >= front_arrival_lap and front_rise_rate > 0) else "stable")
                 for _did, _state in states.items():
                     if _state.dnf:
                         continue
                     if entry_map[_did].team_id == player_team_id:
+                        pos_idx = pos_lookup.get(_did, 1) - 1  # 0-based
+                        gap_ahead = (
+                            round(states[_did].total_race_time - states[active_sc[pos_idx - 1]].total_race_time, 2)
+                            if pos_idx > 0 else None
+                        )
+                        gap_behind = (
+                            round(states[active_sc[pos_idx + 1]].total_race_time - states[_did].total_race_time, 2)
+                            if pos_idx < len(active_sc) - 1 else None
+                        )
                         player_infos.append({
                             "id": _did,
                             "name": entry_map[_did].driver.name,
@@ -510,6 +731,13 @@ def simulate_race(
                             "car_obj": entry_map[_did].car,
                             "circuit_obj": circuit,
                             "weather": weather,
+                            "gap_ahead": gap_ahead,
+                            "gap_behind": gap_behind,
+                            "sc_type": sc_state,
+                            "sc_laps_remaining": sc_laps_remaining,
+                            "rain_prob": rain_prob,
+                            "forecast": sc_forecast,
+                            "trend": sc_trend,
                         })
                 if player_infos:
                     sc_decisions = sc_pit_callback(lap, total_laps, player_infos)
@@ -557,6 +785,7 @@ def simulate_race(
                     _state.tyre_age = 0
                     _state.tyre_compound = next_cmp
                     _state.stint_index += 1
+                    pit_recovery_laps_left[_did] = 2
                     pitted_on_sc.add(_did)
                     events.append(
                         f"Lap {lap}: {_driver.name} pits under SC ({next_cmp}, {total_sc_pit:.1f}s)"
@@ -573,19 +802,157 @@ def simulate_race(
                         total_time=round(total_sc_pit, 2),
                     ))
 
-            # Apply SC timing credit to non-pitters (variable 2–5s)
-            if pitted_on_sc:
-                sc_pit_credit = random.uniform(2.0, 5.0)
-                for _did, _state in states.items():
-                    if not _state.dnf and _did not in pitted_on_sc:
-                        _state.total_race_time += sc_pit_credit
-
             sc_laps_remaining -= 1
             sc_lap_count += 1
             if sc_laps_remaining <= 0:
                 events.append(f"Lap {lap}: Racing resumes")
                 sc_state = None
                 sc_lap_count = 0
+
+        # ── Weather callback (player decision at key thresholds) ─────────
+        if weather_callback and sc_state is None and player_team_id:
+            threshold = None
+
+            if rain_prob >= 92 and not thresholds_crossed["wet"]:
+                threshold = "wet"
+                thresholds_crossed["wet"] = True
+            elif rain_prob >= 65 and not thresholds_crossed["damp"] and not thresholds_crossed["wet"]:
+                threshold = "damp"
+                thresholds_crossed["damp"] = True
+            elif (rain_prob >= 55 and not player_ignored_warning
+                  and not thresholds_crossed["warning"] and warning_cooldown == 0):
+                threshold = "warning"
+                thresholds_crossed["warning"] = True
+            elif (rain_decreasing and rain_prob < 65 and prev_lap_rain_prob >= 65
+                  and peak_rain_prob > 70 and not thresholds_crossed["drying"]):
+                threshold = "drying"
+                thresholds_crossed["drying"] = True
+
+            if threshold:
+                forecast = _generate_weather_forecast(
+                    rain_prob, rain_decreasing, front_rise_rate, front_decay_rate,
+                    front_arrival_lap, lap,
+                )
+                trend = "falling" if rain_decreasing else ("rising" if front_active else "stable")
+
+                _active_sorted = [d for d, s in states.items() if not s.dnf]
+                _active_sorted.sort(key=lambda d: states[d].total_race_time)
+                _pos_lookup = {d: p + 1 for p, d in enumerate(_active_sorted)}
+
+                player_infos_w: list = []
+                for _did, _state in states.items():
+                    if _state.dnf:
+                        continue
+                    if entry_map[_did].team_id == player_team_id:
+                        player_infos_w.append({
+                            "id": _did,
+                            "name": entry_map[_did].driver.name,
+                            "compound": _state.tyre_compound,
+                            "tyre_age": _state.tyre_age,
+                            "position": _pos_lookup.get(_did, 0),
+                            "circuit_wear": circuit.tire_wear,
+                            "laps_remaining": total_laps - lap,
+                            "driver_obj": entry_map[_did].driver,
+                            "car_obj": entry_map[_did].car,
+                            "circuit_obj": circuit,
+                        })
+
+                if player_infos_w:
+                    weather_meta: dict = {}
+                    decisions_w = weather_callback(
+                        lap, total_laps, threshold, player_infos_w,
+                        rain_prob, forecast, trend, weather_meta,
+                    )
+
+                    if threshold == "warning":
+                        if weather_meta.get("ignored_warning"):
+                            player_ignored_warning = True
+                        elif all(v is None for v in decisions_w.values()):
+                            # Player waited — re-arm warning after 3 laps
+                            thresholds_crossed["warning"] = False
+                            warning_cooldown = 3
+
+                    # Apply pit decisions for player drivers
+                    for _did, _state in states.items():
+                        if _state.dnf:
+                            continue
+                        if entry_map[_did].team_id != player_team_id:
+                            continue
+                        w_strat = decisions_w.get(_did)
+                        if w_strat is not None:
+                            _entry = entry_map[_did]
+                            _car = _entry.car
+                            _driver = _entry.driver
+                            next_cmp = w_strat.stints[0].compound.lower()
+                            pit_schedules[_did] = {}
+                            stint_lap = lap
+                            for _i, _stint in enumerate(w_strat.stints[:-1]):
+                                stint_lap += _stint.laps
+                                pit_schedules[_did][stint_lap] = w_strat.stints[_i + 1].compound.lower()
+                            old_cmp = _state.tyre_compound
+                            stat_s = round(2.0 + (90 - _car.pit_crew) * 0.05 + random.gauss(0, 0.15), 2)
+                            stat_s = max(1.8, stat_s)
+                            total_w_pit = circuit.pit_lane_loss + stat_s
+                            _state.total_race_time += total_w_pit
+                            _state.tyre_age = 0
+                            _state.tyre_compound = next_cmp
+                            _state.stint_index += 1
+                            pit_recovery_laps_left[_did] = 2
+                            events.append(
+                                f"Lap {lap}: {_driver.name} pits for weather ({next_cmp}, {total_w_pit:.1f}s)"
+                            )
+                            pit_stop_log.append(PitStop(
+                                driver_name=_driver.name,
+                                team_name=_entry.team_name,
+                                team_color=_entry.team_color,
+                                lap=lap,
+                                old_compound=old_cmp,
+                                new_compound=next_cmp,
+                                stationary_time=stat_s,
+                                pit_lane_loss=float(circuit.pit_lane_loss),
+                                total_time=round(total_w_pit, 2),
+                            ))
+
+        # ── AI mid-race weather pit re-evaluation ────────────────────────
+        if rain_prob >= 65 and prev_lap_rain_prob < 65:
+            from engine.tyres import ai_should_pit_for_weather
+            for _did, _state in states.items():
+                if _state.dnf:
+                    continue
+                if player_team_id and entry_map[_did].team_id == player_team_id:
+                    continue
+                if _state.tyre_compound in ("intermediate", "wet"):
+                    continue
+                laps_rem = total_laps - lap
+                if ai_should_pit_for_weather(_state, entry_map[_did], circuit, rain_prob, laps_rem):
+                    _entry = entry_map[_did]
+                    _car = _entry.car
+                    _driver = _entry.driver
+                    next_cmp = "intermediate" if rain_prob < 82 else "wet"
+                    old_cmp = _state.tyre_compound
+                    stat_s = round(2.0 + (90 - _car.pit_crew) * 0.05 + random.gauss(0, 0.15), 2)
+                    stat_s = max(1.8, stat_s)
+                    total_w_pit = circuit.pit_lane_loss + stat_s
+                    _state.total_race_time += total_w_pit
+                    _state.tyre_age = 0
+                    _state.tyre_compound = next_cmp
+                    _state.stint_index += 1
+                    pit_recovery_laps_left[_did] = 2
+                    pit_schedules[_did] = {}
+                    events.append(
+                        f"Lap {lap}: {_driver.name} pits for weather ({next_cmp}, {total_w_pit:.1f}s)"
+                    )
+                    pit_stop_log.append(PitStop(
+                        driver_name=_driver.name,
+                        team_name=_entry.team_name,
+                        team_color=_entry.team_color,
+                        lap=lap,
+                        old_compound=old_cmp,
+                        new_compound=next_cmp,
+                        stationary_time=stat_s,
+                        pit_lane_loss=float(circuit.pit_lane_loss),
+                        total_time=round(total_w_pit, 2),
+                    ))
 
         # ── Overtaking pass ─────────────────────────────────────────────
         # Sort active drivers by total race time (lowest = leader)
@@ -655,6 +1022,33 @@ def simulate_race(
 
         # ── Record lap data (position now known after overtaking) ────────
         active.sort(key=lambda d: states[d].total_race_time)
+
+        # ── Strategy-gained position credit ─────────────────────────────────
+        if sc_state is None:
+            for pos_idx, did in enumerate(active, 1):
+                curr_pos = pos_idx
+                prev_pos = prev_positions.get(did)
+                if pit_recovery_laps_left[did] > 0:
+                    pit_recovery_laps_left[did] -= 1
+                if prev_pos is None:
+                    continue
+                if lap_snapshots.get(did, {}).get("pitted", False):
+                    continue
+                if pit_recovery_laps_left[did] > 0:
+                    continue
+                positions_gained = prev_pos - curr_pos
+                if positions_gained > 0:
+                    overtakes_made[did] += positions_gained
+        else:
+            # Drain cooldowns even under SC so they don't carry over
+            for did in active:
+                if pit_recovery_laps_left[did] > 0:
+                    pit_recovery_laps_left[did] -= 1
+
+        # Update prev_positions unconditionally (SC reorders still need tracking)
+        for pos_idx, did in enumerate(active, 1):
+            prev_positions[did] = pos_idx
+
         for pos_idx, did in enumerate(active, 1):
             if did in lap_snapshots:
                 s = lap_snapshots[did]
@@ -667,6 +1061,7 @@ def simulate_race(
                     fuel_load=s["fuel_load"],
                     position=pos_idx,
                     pitted=s["pitted"],
+                    rain_prob=s.get("rain_prob", 0.0),
                 ))
         # Record DNF laps (drivers who retired this lap)
         for did, state in states.items():
@@ -734,4 +1129,6 @@ def simulate_race(
         lap_data=lap_data,
         overtakes_made=overtakes_made,
         defenses_made=defenses_made,
+        peak_rain_prob=peak_rain_prob,
+        weather_summary=weather_summary,
     )

@@ -62,7 +62,7 @@
     },
     {
       "id": "cadillac", "name": "Cadillac F1 Team", "short_name": "Cadillac", "color": "blue",
-      "budget": 95,
+      "budget": 62,
       "car": { "engine": 72, "aerodynamics": 67, "mechanical_grip": 70, "reliability": 66, "tire_deg": 69, "braking": 70, "pit_crew": 65 },
       "driver_ids": ["PER", "BOT"]
     }

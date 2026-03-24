@@ -278,6 +278,7 @@ def main() -> None:
                     season_poles=season_poles,
                     season_fastest_laps=season_fastest_laps,
                     season_podiums=season_podiums,
+                    race_report=report,
                 )
             else:
                 console.input("\n[dim]Press Enter to see the final standings…[/dim]")
@@ -326,7 +327,7 @@ def main() -> None:
         )
         console.print()
 
-        play_next = _run_offseason(season_year, teams, drivers, team_pts, player_team_id, all_sponsors)
+        play_next = _run_offseason(season_year, teams, drivers, team_pts, player_team_id, all_sponsors, total_races)
         if not play_next:
             break
         season_year += 1
