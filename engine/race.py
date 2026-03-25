@@ -1,5 +1,7 @@
 """Race simulation orchestrator.
-# Functions: _execute_pit_stop:33  simulate_race:75
+# Functions: _execute_pit_stop:33  _compute_driver_lap_time:78
+#            _process_overtaking_pass:104  _build_race_results:153
+#            simulate_race:191
 """
 from __future__ import annotations
 
@@ -73,6 +75,192 @@ def _execute_pit_stop(
         total_time=round(total_time, 2),
     ))
     return total_time
+
+
+# ─── Lap time computation ─────────────────────────────────────────────────────
+
+def _compute_driver_lap_time(
+    entry: RaceEntry,
+    state: DriverLapState,
+    circuit,
+    rain_prob: float,
+    life: float,
+    sc_state: Optional[str],
+    events: List[str],
+    lap: int,
+) -> float:
+    """Return the driver's lap time including fuel, tyre, SC delta, and mistakes.
+
+    Appends a mistake event to *events* when one occurs. All other state
+    mutations (total_race_time, tyre_age, fuel_load) remain the caller's
+    responsibility.
+    """
+    driver = entry.driver
+    base = _base_lap_time(entry, circuit, rain_prob)
+    fuel_delta = (state.fuel_load / 100.0) * 2.8
+    wear_frac = min(1.0, state.tyre_age / max(1, life))
+    cmp_delta = compound_pace_delta(state.tyre_compound, rain_prob)
+    tyre_delta = wear_frac ** 2 * TYRE_WEAR_TIME_SCALE + cmp_delta
+
+    stability = (driver.consistency + driver.mental) / 200.0
+    lap_sigma = 0.25 * (1.0 + (1.0 - stability))
+    lap_time = base + fuel_delta + tyre_delta + random.gauss(0, lap_sigma)
+
+    if sc_state == "SC":
+        lap_time *= 1.40
+    elif sc_state == "VSC":
+        lap_time *= 1.30
+
+    mistake_prob = max(0.0, (60.0 - driver.experience) / 100.0) * 0.04
+    if random.random() < mistake_prob:
+        mistake_time = round(random.uniform(1.5, 4.0), 1)
+        lap_time += mistake_time
+        if lap <= 15:
+            events.append(f"Lap {lap}: {driver.name} makes a mistake, +{mistake_time}s")
+
+    return lap_time
+
+
+# ─── Overtaking pass ──────────────────────────────────────────────────────────
+
+def _process_overtaking_pass(
+    active: List[str],
+    states: Dict[str, DriverLapState],
+    entry_map: Dict[str, RaceEntry],
+    lap_times: Dict[str, float],
+    circuit,
+    lap: int,
+    overtakes_made: Dict[str, int],
+    defenses_made: Dict[str, int],
+    events: List[str],
+) -> bool:
+    """Process all overtaking duels for this lap.
+
+    Mutates *states* (time swap / DNF), *active* (position swap), the counter
+    dicts, and *events*. Returns True if any collision caused a retirement.
+    """
+    had_dnf = False
+    i = len(active) - 1
+    while i > 0:
+        behind_did = active[i]
+        ahead_did  = active[i - 1]
+
+        if behind_did not in lap_times or ahead_did not in lap_times:
+            i -= 1
+            continue
+
+        gap = states[behind_did].total_race_time - states[ahead_did].total_race_time
+        if gap > BATTLE_RANGE_S:
+            i -= 1
+            continue
+
+        speed_delta = lap_times[ahead_did] - lap_times[behind_did]
+
+        if speed_delta >= OVERTAKE_THRESHOLD:
+            success, collision = _attempt_overtake(
+                entry_map[behind_did], entry_map[ahead_did], circuit, speed_delta
+            )
+
+            if collision:
+                for did, label in [
+                    (behind_did, entry_map[behind_did].driver.name),
+                    (ahead_did,  entry_map[ahead_did].driver.name),
+                ]:
+                    retired, damage_s = roll_collision_outcome()
+                    if retired:
+                        states[did].dnf = True
+                        states[did].dnf_reason = "Collision"
+                        had_dnf = True
+                        events.append(f"Lap {lap}: {label} retires after collision!")
+                    else:
+                        states[did].total_race_time += damage_s
+                        events.append(
+                            f"Lap {lap}: {label} carries collision damage (+{damage_s}s)"
+                        )
+
+            elif success:
+                t_ahead  = states[ahead_did].total_race_time
+                t_behind = states[behind_did].total_race_time
+                mid = (t_ahead + t_behind) / 2.0
+                states[behind_did].total_race_time = mid - 0.25
+                states[ahead_did].total_race_time  = mid + 0.25
+                active[i - 1] = behind_did
+                active[i]     = ahead_did
+                overtakes_made[behind_did] += 1
+
+                new_pos = i
+                if new_pos <= 10:
+                    events.append(
+                        f"Lap {lap}: {entry_map[behind_did].driver.name} overtakes "
+                        f"{entry_map[ahead_did].driver.name} for P{new_pos}"
+                    )
+            else:
+                defenses_made[ahead_did] += 1
+
+        i -= 1
+    return had_dnf
+
+
+# ─── Result assembly ──────────────────────────────────────────────────────────
+
+def _build_race_results(
+    states: Dict[str, DriverLapState],
+    entry_map: Dict[str, RaceEntry],
+    grid_pos_fn: Callable[[str], int],
+    fastest_lap_driver: Optional[str],
+    fastest_lap_time: float,
+) -> List[RaceResult]:
+    """Build the ordered List[RaceResult] from settled race state.
+
+    Pure function — constructs and returns a new list, mutates nothing in the
+    caller's scope. fastest_lap bonuses are applied to freshly created objects.
+    """
+    finisher_dids = [did for did, s in states.items() if not s.dnf]
+    dnf_dids      = [did for did, s in states.items() if s.dnf]
+    finisher_dids.sort(key=lambda d: states[d].total_race_time)
+
+    leader_time = states[finisher_dids[0]].total_race_time if finisher_dids else 0.0
+    results: List[RaceResult] = []
+
+    for pos, did in enumerate(finisher_dids, 1):
+        entry = entry_map[did]
+        gap = round(states[did].total_race_time - leader_time, 3)
+        results.append(RaceResult(
+            position=pos,
+            driver=entry.driver,
+            team_id=entry.team_id,
+            team_name=entry.team_name,
+            team_color=entry.team_color,
+            time_gap=gap,
+            points=POINTS_SYSTEM.get(pos, 0),
+            grid_position=grid_pos_fn(did),
+        ))
+
+    for pos, did in enumerate(dnf_dids, len(finisher_dids) + 1):
+        entry = entry_map[did]
+        results.append(RaceResult(
+            position=pos,
+            driver=entry.driver,
+            team_id=entry.team_id,
+            team_name=entry.team_name,
+            team_color=entry.team_color,
+            time_gap=0.0,
+            points=0,
+            dnf=True,
+            dnf_reason=states[did].dnf_reason,
+            grid_position=grid_pos_fn(did),
+        ))
+
+    if fastest_lap_driver and fastest_lap_driver in finisher_dids:
+        fl_pos = finisher_dids.index(fastest_lap_driver) + 1
+        for r in results:
+            if r.driver.id == fastest_lap_driver:
+                r.fastest_lap = True
+                if fl_pos <= 10:
+                    r.points += 1
+                break
+
+    return results
 
 
 # ─── Race simulation ──────────────────────────────────────────────────────────
@@ -213,28 +401,10 @@ def simulate_race(
                 continue
 
             # ── Compute lap time ──────────────────────────────────────────────
-            base = _base_lap_time(entry, circuit, rain_prob)
-            fuel_delta = (state.fuel_load / 100.0) * 2.8
+            lap_time = _compute_driver_lap_time(
+                entry, state, circuit, rain_prob, life, sc_state, events, lap
+            )
             wear_frac = min(1.0, state.tyre_age / max(1, life))
-            cmp_delta = compound_pace_delta(state.tyre_compound, rain_prob)
-            tyre_delta = wear_frac ** 2 * TYRE_WEAR_TIME_SCALE + cmp_delta
-
-            stability = (driver.consistency + driver.mental) / 200.0
-            lap_sigma = 0.25 * (1.0 + (1.0 - stability))
-            lap_time = base + fuel_delta + tyre_delta + random.gauss(0, lap_sigma)
-
-            if sc_state == "SC":
-                lap_time *= 1.40
-            elif sc_state == "VSC":
-                lap_time *= 1.30
-
-            mistake_prob = max(0.0, (60.0 - driver.experience) / 100.0) * 0.04
-            if random.random() < mistake_prob:
-                mistake_time = round(random.uniform(1.5, 4.0), 1)
-                lap_time += mistake_time
-                if lap <= 15:
-                    events.append(f"Lap {lap}: {driver.name} makes a mistake, +{mistake_time}s")
-
             lap_times[did] = lap_time
             state.total_race_time += lap_time
 
@@ -569,64 +739,11 @@ def simulate_race(
         active.sort(key=lambda d: states[d].total_race_time)
 
         if sc_state is None:
-            i = len(active) - 1
-            while i > 0:
-                behind_did = active[i]
-                ahead_did  = active[i - 1]
-
-                if behind_did not in lap_times or ahead_did not in lap_times:
-                    i -= 1
-                    continue
-
-                gap = states[behind_did].total_race_time - states[ahead_did].total_race_time
-                if gap > BATTLE_RANGE_S:
-                    i -= 1
-                    continue
-
-                speed_delta = lap_times[ahead_did] - lap_times[behind_did]
-
-                if speed_delta >= OVERTAKE_THRESHOLD:
-                    success, collision = _attempt_overtake(
-                        entry_map[behind_did], entry_map[ahead_did], circuit, speed_delta
-                    )
-
-                    if collision:
-                        for did, label in [
-                            (behind_did, entry_map[behind_did].driver.name),
-                            (ahead_did,  entry_map[ahead_did].driver.name),
-                        ]:
-                            retired, damage_s = roll_collision_outcome()
-                            if retired:
-                                states[did].dnf = True
-                                states[did].dnf_reason = "Collision"
-                                lap_had_incident = True
-                                events.append(f"Lap {lap}: {label} retires after collision!")
-                            else:
-                                states[did].total_race_time += damage_s
-                                events.append(
-                                    f"Lap {lap}: {label} carries collision damage (+{damage_s}s)"
-                                )
-
-                    elif success:
-                        t_ahead  = states[ahead_did].total_race_time
-                        t_behind = states[behind_did].total_race_time
-                        mid = (t_ahead + t_behind) / 2.0
-                        states[behind_did].total_race_time = mid - 0.25
-                        states[ahead_did].total_race_time  = mid + 0.25
-                        active[i - 1] = behind_did
-                        active[i]     = ahead_did
-                        overtakes_made[behind_did] += 1
-
-                        new_pos = i
-                        if new_pos <= 10:
-                            events.append(
-                                f"Lap {lap}: {entry_map[behind_did].driver.name} overtakes "
-                                f"{entry_map[ahead_did].driver.name} for P{new_pos}"
-                            )
-                    else:
-                        defenses_made[ahead_did] += 1
-
-                i -= 1
+            if _process_overtaking_pass(
+                active, states, entry_map, lap_times, circuit, lap,
+                overtakes_made, defenses_made, events,
+            ):
+                lap_had_incident = True
 
         # ── Record lap data ───────────────────────────────────────────────────
         active.sort(key=lambda d: states[d].total_race_time)
@@ -684,51 +801,9 @@ def simulate_race(
                 ))
 
     # ── Build final results ───────────────────────────────────────────────────
-    finisher_dids = [did for did, s in states.items() if not s.dnf]
-    dnf_dids      = [did for did, s in states.items() if s.dnf]
-
-    finisher_dids.sort(key=lambda d: states[d].total_race_time)
-    leader_time = states[finisher_dids[0]].total_race_time if finisher_dids else 0.0
-
-    results: List[RaceResult] = []
-
-    for pos, did in enumerate(finisher_dids, 1):
-        entry = entry_map[did]
-        gap = round(states[did].total_race_time - leader_time, 3)
-        results.append(RaceResult(
-            position=pos,
-            driver=entry.driver,
-            team_id=entry.team_id,
-            team_name=entry.team_name,
-            team_color=entry.team_color,
-            time_gap=gap,
-            points=POINTS_SYSTEM.get(pos, 0),
-            grid_position=grid_pos(did),
-        ))
-
-    for pos, did in enumerate(dnf_dids, len(finisher_dids) + 1):
-        entry = entry_map[did]
-        results.append(RaceResult(
-            position=pos,
-            driver=entry.driver,
-            team_id=entry.team_id,
-            team_name=entry.team_name,
-            team_color=entry.team_color,
-            time_gap=0.0,
-            points=0,
-            dnf=True,
-            dnf_reason=states[did].dnf_reason,
-            grid_position=grid_pos(did),
-        ))
-
-    if fastest_lap_driver and fastest_lap_driver in finisher_dids:
-        fl_pos = finisher_dids.index(fastest_lap_driver) + 1
-        for r in results:
-            if r.driver.id == fastest_lap_driver:
-                r.fastest_lap = True
-                if fl_pos <= 10:
-                    r.points += 1
-                break
+    results = _build_race_results(
+        states, entry_map, grid_pos, fastest_lap_driver, fastest_lap_time
+    )
 
     return RaceReport(
         results=results,
