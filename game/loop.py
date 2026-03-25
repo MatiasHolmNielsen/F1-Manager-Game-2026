@@ -3,10 +3,13 @@ import random
 from typing import Dict, List, Optional
 
 from rich.align import Align
+from rich.columns import Columns
 from rich.console import Console
 from rich import box
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
@@ -17,6 +20,7 @@ from .ui import (
     show_quali_results, show_strategy_menu, show_strategy_summary,
     show_circuit_briefing, show_race_transition, show_sponsor_selection,
     run_knockout_qualifying_with_animation, run_race_with_animation,
+    show_team_creator,
 )
 from .management import management_menu
 from .finances import _apply_race_finances
@@ -30,27 +34,83 @@ from models.team import Team
 console = Console()
 
 
+_ASCII_BANNER = """\
+[bold red] ███████╗ ██╗     [/bold red][bold white]███╗   ███╗ █████╗ ███╗  ██╗ █████╗  ██████╗ ███████╗██████╗ [/bold white]
+[bold red] ██╔════╝ ██║     [/bold red][bold white]████╗ ████║██╔══██╗████╗ ██║██╔══██╗██╔════╝ ██╔════╝██╔══██╗[/bold white]
+[bold red] █████╗   ██║     [/bold red][bold white]██╔████╔██║███████║██╔██╗██║███████║██║  ███╗█████╗  ██████╔╝[/bold white]
+[bold red] ██╔══╝   ██║     [/bold red][bold white]██║╚██╔╝██║██╔══██║██║╚████║██╔══██║██║   ██║██╔══╝  ██╔══██╗[/bold white]
+[bold red] ██║      ███████╗[/bold red][bold white]██║ ╚═╝ ██║██║  ██║██║ ╚███║██║  ██║╚██████╔╝███████╗██║  ██║[/bold white]
+[bold red] ╚═╝      ╚══════╝[/bold red][bold white]╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝[/bold white]"""
+
+_YEAR_BANNER = "[bold red]  2 0 2 6[/bold red]"
+
+
 def show_welcome() -> None:
     console.clear()
     console.print()
+    console.print(Rule(style="red"))
+    console.print()
+
+    # ASCII art title — centred
+    for line in _ASCII_BANNER.splitlines():
+        console.print(Align.center(Text.from_markup(line)))
+
+    console.print()
+    console.print(Align.center(Text.from_markup(_YEAR_BANNER)))
+    console.print()
+
+    console.print(Rule(characters="─", style="dim red"))
+
+    console.print()
     console.print(
-        Panel(
-            Align.center(
-                Text.from_markup(
-                    "[bold red]F1 MANAGER 2026[/bold red]\n"
-                    "[dim]Build your team. Dominate the season.[/dim]"
-                )
-            ),
-            box=box.DOUBLE_EDGE,
-            border_style="red",
-            padding=(1, 6),
+        Align.center(
+            Text.from_markup(
+                "[italic dim]Season 2026  ·  Build your team. Dominate the grid.[/italic dim]"
+            )
+        )
+    )
+    console.print()
+
+    console.print(Rule(style="red"))
+
+    console.print()
+    console.print(
+        Align.center(
+            Text.from_markup("[dim]v1.0  ·  Use your keyboard to navigate  ·  Good luck, Team Principal[/dim]")
         )
     )
     console.print()
 
 
-def show_team_selection(teams: Dict[str, Team], drivers: Dict[str, Driver]) -> str:
+def _maybe_add_custom_team(
+    teams: Dict[str, Team], drivers: Dict[str, Driver], force: bool = False
+) -> Optional[str]:
+    """Prompt the player to create a custom team. Returns the new team's id if created, else None.
+
+    When force=True the prompt is skipped and team creation proceeds immediately.
+    """
+    if not force:
+        answer = Prompt.ask(
+            "Create a custom team?", choices=["y", "n"], default="n", show_choices=True
+        ).strip().lower()
+        if answer != "y":
+            return None
+
+    custom_team, driver_ids = show_team_creator(drivers)
+    teams[custom_team.id] = custom_team
+    for did in driver_ids:
+        if did in drivers:
+            drivers[did].team_id = custom_team.id
+    custom_team.driver_ids = list(driver_ids)
+    return custom_team.id
+
+
+def show_team_selection(
+    teams: Dict[str, Team], drivers: Dict[str, Driver], auto_create: bool = False
+) -> str:
     console.print(Panel("[bold]SELECT YOUR TEAM[/bold]", border_style="yellow", padding=(0, 2)))
+
+    custom_team_id = _maybe_add_custom_team(teams, drivers, force=True) if auto_create else None
 
     table = Table(box=box.ROUNDED, header_style="bold yellow", show_lines=False)
     table.add_column("#", width=3, justify="center")
@@ -65,9 +125,14 @@ def show_team_selection(teams: Dict[str, Team], drivers: Dict[str, Driver]) -> s
         team_drivers = [drivers[did] for did in team.driver_ids if did in drivers]
         d1 = f"{team_drivers[0].name} ({team_drivers[0].overall})" if len(team_drivers) > 0 else "—"
         d2 = f"{team_drivers[1].name} ({team_drivers[1].overall})" if len(team_drivers) > 1 else "—"
+        label = (
+            f"[{team.color}]{team.short_name}[/{team.color}] (custom)"
+            if team.id == custom_team_id
+            else f"[{team.color}]{team.short_name}[/{team.color}]"
+        )
         table.add_row(
             str(i),
-            f"[{team.color}]{team.short_name}[/{team.color}]",
+            label,
             str(team.car.overall),
             d1, d2,
             f"€{team.budget:.0f}M",
@@ -82,15 +147,21 @@ def show_team_selection(teams: Dict[str, Team], drivers: Dict[str, Driver]) -> s
         if choice in team_list_ids:
             idx = int(choice) - 1
             selected = team_list[idx]
-            console.print(
-                f"\n[bold green]You are now managing "
-                f"[{selected.color}]{selected.name}[/{selected.color}][/bold green]!\n"
-            )
+            if selected.id == custom_team_id:
+                console.print(
+                    f"\nYou built [{selected.color}]{selected.name}[/{selected.color}]"
+                    f" from the ground up — now prove it.\n"
+                )
+            else:
+                console.print(
+                    f"\n[bold green]You are now managing "
+                    f"[{selected.color}]{selected.name}[/{selected.color}][/bold green]!\n"
+                )
             return selected.id
         console.print("[red]Invalid choice.[/red]")
 
 
-def main(save_data: dict = None) -> None:
+def main(save_data: dict = None, create_team: bool = False, slot: int = 1) -> None:
     if save_data:
         from game.save_load import apply_save
         drivers = load_drivers()
@@ -105,7 +176,7 @@ def main(save_data: dict = None) -> None:
         teams = load_teams(drivers)
         all_sponsors = load_sponsors()
 
-        player_team_id = show_team_selection(teams, drivers)
+        player_team_id = show_team_selection(teams, drivers, auto_create=create_team)
         player_team = teams[player_team_id]
 
         season_year = 2026
@@ -152,10 +223,15 @@ def main(save_data: dict = None) -> None:
             # ── Circuit briefing ─────────────────────────────────────────
             show_circuit_briefing(circuit, player_team)
 
-            management_menu(
+            slot = management_menu(
                 player_team, drivers, teams,
                 race_num, total_races,
                 driver_pts, team_pts,
+                season_year=season_year,
+                season_poles=season_poles,
+                season_fastest_laps=season_fastest_laps,
+                season_podiums=season_podiums,
+                slot=slot,
             )
 
             # Build all entries (before qualifying)
@@ -283,6 +359,7 @@ def main(save_data: dict = None) -> None:
 
             from game.save_load import save_game
             save_game(
+                slot,
                 season_year, player_team_id,
                 race_num + 1,
                 season_poles, season_fastest_laps, season_podiums,
@@ -371,3 +448,55 @@ def main(save_data: dict = None) -> None:
             f"[dim]Good luck![/dim]"
         )
         console.input("\n[dim]Press Enter to start…[/dim]")
+
+
+def show_main_menu(has_save: bool) -> str:
+    """Render the 3-panel main menu and return the player's choice.
+
+    Returns one of: "1", "2", "3", or "L" (only when has_save is True).
+    No game logic — pure display and input collection.
+    """
+    panel_1 = Panel(
+        "[bold]1. Manage a Team[/bold]\n\n"
+        "[dim]Pick an existing team and lead them to glory[/dim]",
+        box=box.DOUBLE_EDGE,
+        border_style="red",
+        padding=(1, 2),
+        expand=True,
+    )
+    panel_2 = Panel(
+        "[bold]2. Create Your Own Team[/bold]\n\n"
+        "[dim]Build your squad from scratch[/dim]",
+        box=box.DOUBLE_EDGE,
+        border_style="red",
+        padding=(1, 2),
+        expand=True,
+    )
+    panel_3 = Panel(
+        "[dim][bold]3. Driver Career[/bold]\n\n"
+        "[italic]Coming soon…[/italic][/dim]",
+        box=box.DOUBLE_EDGE,
+        border_style="red",
+        padding=(1, 2),
+        expand=True,
+    )
+
+    console.print(Columns([panel_1, panel_2, panel_3], equal=True, expand=True))
+
+    if has_save:
+        console.print()
+        console.print("[dim]──────────────────────────────────────────────────────[/dim]")
+        console.print("  [bold yellow]L[/bold yellow] · Load Saved Game")
+
+    console.print()
+
+    valid = {"1", "2", "3"}
+    prompt_label = "Choose [1/2/3/L]" if has_save else "Choose [1/2/3]"
+    if has_save:
+        valid.add("L")
+
+    while True:
+        raw = Prompt.ask(f"  {prompt_label}").strip().upper()
+        if raw in valid:
+            return raw
+        console.print("[red]Invalid choice. Please enter 1, 2, 3" + (" or L." if has_save else ".") + "[/red]")

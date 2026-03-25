@@ -1,18 +1,22 @@
-"""Save / load game state to a single JSON slot."""
+"""Save / load game state to per-slot JSON files (5 slots)."""
 import json
 import os
 import sys
-from typing import Optional
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
 
 
-def _save_path() -> str:
+def _slot_path(slot: int) -> Path:
     # When frozen by PyInstaller, save next to the .exe, not inside the temp bundle.
     if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(sys.executable), "save.json")
-    return os.path.join(os.path.dirname(__file__), "..", "save.json")
+        base = Path(os.path.dirname(sys.executable))
+    else:
+        base = Path(os.path.dirname(__file__)) / ".."
+    saves_dir = (base / "saves").resolve()
+    saves_dir.mkdir(exist_ok=True)
+    return saves_dir / f"save_slot_{slot}.json"
 
-
-SAVE_PATH = _save_path()
 
 DRIVER_MUTABLE = [
     "age", "pace", "qualifying_pace", "consistency", "overtaking", "defending",
@@ -23,13 +27,38 @@ CAR_ATTRS = ["engine", "aerodynamics", "mechanical_grip", "reliability", "tire_d
 
 
 def save_exists() -> bool:
-    return os.path.isfile(SAVE_PATH)
+    return any(_slot_path(s).exists() for s in range(1, 6))
 
 
-def save_game(season_year, player_team_id, race_num,
+def list_saves() -> List[dict]:
+    result = []
+    for slot in range(1, 6):
+        path = _slot_path(slot)
+        if path.exists():
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                result.append({
+                    "slot": slot,
+                    "team": data.get("team_name", "Unknown"),
+                    "season": data.get("season_year"),
+                    "race": data.get("race_num"),
+                    "saved_at": data.get("saved_at"),
+                    "empty": False,
+                })
+            except (json.JSONDecodeError, OSError):
+                result.append({"slot": slot, "empty": True})
+        else:
+            result.append({"slot": slot, "empty": True})
+    return result
+
+
+def save_game(slot: int, season_year, player_team_id, race_num,
               season_poles, season_fastest_laps, season_podiums,
               driver_pts, team_pts, drivers, teams) -> None:
     data = {
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "team_name": teams[player_team_id].name,
         "season_year": season_year,
         "player_team_id": player_team_id,
         "race_num": race_num,
@@ -52,14 +81,16 @@ def save_game(season_year, player_team_id, race_num,
             for tid, t in teams.items()
         },
     }
-    with open(SAVE_PATH, "w") as f:
+    path = _slot_path(slot)
+    with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def load_game() -> Optional[dict]:
-    if not save_exists():
+def load_game(slot: int) -> Optional[dict]:
+    path = _slot_path(slot)
+    if not path.exists():
         return None
-    with open(SAVE_PATH) as f:
+    with open(path) as f:
         return json.load(f)
 
 

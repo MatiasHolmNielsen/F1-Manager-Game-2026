@@ -1,5 +1,5 @@
 """game.ui package — re-exports everything callers expect from the old game.ui module."""
-from game.ui.helpers import fmt_lap_time, stat_bar, _xp_bar, _rain_bar
+from game.ui.helpers import fmt_lap_time, stat_bar, _xp_bar, _rain_bar, show_team_creator, show_slot_picker
 from game.ui.race_display import (
     show_race_header, show_race_results, show_pit_stats,
     show_race_events, show_lap_analysis,

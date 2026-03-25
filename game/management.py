@@ -196,7 +196,12 @@ def management_menu(
     total_races: int,
     driver_pts: Dict[str, int],
     team_pts: Dict[str, int],
-) -> None:
+    season_year: int = 2026,
+    season_poles: int = 0,
+    season_fastest_laps: int = 0,
+    season_podiums: int = 0,
+    slot: int = 1,
+) -> int:
     while True:
         console.print()
         console.print(
@@ -211,10 +216,11 @@ def management_menu(
         console.print("  [bold cyan][2][/bold cyan] Upgrade car")
         console.print("  [bold cyan][3][/bold cyan] Driver market")
         console.print("  [bold cyan][4][/bold cyan] Championship standings")
-        console.print("  [bold green][5][/bold green] Start race →")
+        console.print("  [bold cyan][5][/bold cyan] Save game")
+        console.print("  [bold green][6][/bold green] Start race →")
         console.print()
 
-        choice = Prompt.ask("Choice", choices=["1", "2", "3", "4", "5"])
+        choice = Prompt.ask("Choice", choices=["1", "2", "3", "4", "5", "6"])
 
         if choice == "1":
             show_team_overview(team, drivers)
@@ -226,4 +232,20 @@ def management_menu(
             show_standings(driver_pts, team_pts, drivers, teams, team.id,
                            races_remaining=total_races - race_num + 1, total_races=total_races)
         elif choice == "5":
+            from game.save_load import list_saves, save_game
+            from .ui import show_slot_picker
+            slots = list_saves()
+            chosen_slot = show_slot_picker(slots, mode="save")
+            if chosen_slot > 0:
+                save_game(
+                    chosen_slot,
+                    season_year, team.id,
+                    race_num,
+                    season_poles, season_fastest_laps, season_podiums,
+                    driver_pts, team_pts, drivers, teams,
+                )
+                console.print(f"[green]Game saved to slot {chosen_slot}.[/green]")
+                slot = chosen_slot
+        elif choice == "6":
             break
+    return slot

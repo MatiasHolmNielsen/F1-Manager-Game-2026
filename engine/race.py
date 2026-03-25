@@ -1,8 +1,9 @@
 """Race simulation orchestrator.
 # Functions: _resolve_grid_pos:38  _execute_pit_stop:46  _compute_driver_lap_time:91
 #            _process_overtaking_pass:117  _build_race_results:166
-#            RaceContext:218  _setup_race:257  _run_lap:316  _finalise_results:559
-#            simulate_race:569
+#            RaceContext:218  _setup_race:257
+#            _handle_sc_phase  _handle_weather_pits  _record_lap_data
+#            _run_lap  _finalise_results  simulate_race
 """
 from __future__ import annotations
 
@@ -400,6 +401,350 @@ def _setup_race(
     return ctx
 
 
+# ─── SC phase helper ──────────────────────────────────────────────────────────
+
+def _handle_sc_phase(
+    ctx: RaceContext,
+    lap: int,
+    total_laps: int,
+    circuit,
+    weather: str,
+    player_team_id: Optional[str],
+    rain_prob: float,
+    sc_pit_callback: Optional[Callable],
+    pitted_this_lap: set,
+    lap_snapshots: Dict[str, dict],
+) -> None:
+    """Compress gaps, open SC/VSC pit window, handle player and AI pitting, then count down SC."""
+    active_sc = [d for d, s in ctx.states.items() if not s.dnf]
+    active_sc.sort(key=lambda d: ctx.states[d].total_race_time)
+
+    # ── Gap compression ───────────────────────────────────────────────────
+    if ctx.sc_state == "SC":
+        if ctx.sc_lap_count == 0:
+            if active_sc:
+                prev_t = ctx.states[active_sc[0]].total_race_time
+                for _did in active_sc[1:]:
+                    gap = ctx.states[_did].total_race_time - prev_t
+                    new_gap = max(0.15, gap * 0.50)
+                    ctx.states[_did].total_race_time = prev_t + new_gap
+                    prev_t = ctx.states[_did].total_race_time
+        else:
+            if active_sc:
+                prev_t = ctx.states[active_sc[0]].total_race_time
+                for _did in active_sc[1:]:
+                    gap = ctx.states[_did].total_race_time - prev_t
+                    ctx.states[_did].total_race_time = prev_t + min(gap, 2.0)
+                    prev_t = ctx.states[_did].total_race_time
+    elif ctx.sc_state == "VSC" and ctx.sc_lap_count == 0:
+        if active_sc:
+            prev_t = ctx.states[active_sc[0]].total_race_time
+            for _did in active_sc[1:]:
+                gap = ctx.states[_did].total_race_time - prev_t
+                new_gap = max(0.15, gap * 0.75)
+                ctx.states[_did].total_race_time = prev_t + new_gap
+                prev_t = ctx.states[_did].total_race_time
+
+    # ── SC/VSC pit window ─────────────────────────────────────────────────
+    if ctx.sc_state == "SC":
+        ai_pit_prob = [0.70, 0.25, 0.10][min(ctx.sc_lap_count, 2)]
+    else:
+        ai_pit_prob = [0.20, 0.10][min(ctx.sc_lap_count, 1)]
+
+    sc_decisions: Dict[str, Optional[RaceStrategy]] = {}
+    if sc_pit_callback and player_team_id and ctx.sc_lap_count == 0:
+        player_infos = []
+        pos_lookup = {did: pos + 1 for pos, did in enumerate(active_sc)}
+        sc_forecast = generate_weather_forecast(
+            rain_prob, ctx.ws.rain_decreasing, ctx.ws.front_rise_rate,
+            ctx.ws.front_decay_rate, ctx.ws.front_arrival_lap, lap,
+        )
+        sc_trend = get_rain_trend(ctx.ws, lap)
+        for _did, _state in ctx.states.items():
+            if _state.dnf:
+                continue
+            if ctx.entry_map[_did].team_id == player_team_id:
+                pos_idx = pos_lookup.get(_did, 1) - 1
+                gap_ahead = (
+                    round(
+                        ctx.states[_did].total_race_time
+                        - ctx.states[active_sc[pos_idx - 1]].total_race_time, 2
+                    )
+                    if pos_idx > 0 else None
+                )
+                gap_behind = (
+                    round(
+                        ctx.states[active_sc[pos_idx + 1]].total_race_time
+                        - ctx.states[_did].total_race_time, 2
+                    )
+                    if pos_idx < len(active_sc) - 1 else None
+                )
+                player_infos.append({
+                    "id": _did,
+                    "name": ctx.entry_map[_did].driver.name,
+                    "compound": _state.tyre_compound,
+                    "tyre_age": _state.tyre_age,
+                    "position": pos_lookup.get(_did, 0),
+                    "circuit_wear": circuit.tire_wear,
+                    "laps_remaining": total_laps - lap,
+                    "driver_obj": ctx.entry_map[_did].driver,
+                    "car_obj": ctx.entry_map[_did].car,
+                    "circuit_obj": circuit,
+                    "weather": weather,
+                    "gap_ahead": gap_ahead,
+                    "gap_behind": gap_behind,
+                    "sc_type": ctx.sc_state,
+                    "sc_laps_remaining": ctx.sc_laps_remaining,
+                    "rain_prob": rain_prob,
+                    "forecast": sc_forecast,
+                    "trend": sc_trend,
+                    "allocation": dict(ctx.live_alloc[_did].sets) if _did in ctx.live_alloc else {},
+                })
+        if player_infos:
+            sc_decisions = sc_pit_callback(lap, total_laps, player_infos)
+
+    pitted_on_sc: set = set()
+    for _did, _state in ctx.states.items():
+        if _state.dnf:
+            continue
+
+        is_player = player_team_id and ctx.entry_map[_did].team_id == player_team_id
+
+        if is_player:
+            sc_strat = sc_decisions.get(_did)
+            should_pit = sc_strat is not None
+        elif lap > 5:
+            should_pit = random.random() < ai_pit_prob
+        else:
+            should_pit = False
+
+        if should_pit:
+            _entry = ctx.entry_map[_did]
+            if is_player and sc_strat is not None:
+                next_cmp = sc_strat.stints[0].compound.lower()
+                if _did in ctx.live_alloc:
+                    actual_cmp = ctx.live_alloc[_did].best_available(next_cmp)
+                    if actual_cmp != next_cmp:
+                        ctx.events.append(
+                            f"Lap {lap}: {_entry.driver.name} — no {next_cmp} sets left "
+                            f"under SC, switching to {actual_cmp}"
+                        )
+                    next_cmp = actual_cmp
+                ctx.pit_schedules[_did] = {}
+                stint_lap = lap
+                for i, stint in enumerate(sc_strat.stints[:-1]):
+                    stint_lap += stint.laps
+                    ctx.pit_schedules[_did][stint_lap] = sc_strat.stints[i + 1].compound.lower()
+            else:
+                next_cmp = "medium"
+                future_pits = {fl: c for fl, c in ctx.pit_schedules.get(_did, {}).items() if fl > lap}
+                if future_pits:
+                    next_fl = min(future_pits)
+                    next_cmp = future_pits[next_fl]
+                    del ctx.pit_schedules[_did][next_fl]
+            _execute_pit_stop(
+                _did, next_cmp, _state.tyre_compound, _state, _entry, circuit, lap,
+                ctx.pit_stop_log, ctx.events, pitted_this_lap, ctx.pit_recovery_laps_left,
+                event_suffix=f" under {ctx.sc_state}",
+            )
+            if is_player and _did in ctx.live_alloc:
+                ctx.live_alloc[_did].consume(next_cmp)
+            pitted_on_sc.add(_did)
+            if _did in lap_snapshots:
+                lap_snapshots[_did]["pitted"] = True
+
+    ctx.sc_laps_remaining -= 1
+    ctx.sc_lap_count += 1
+    if ctx.sc_laps_remaining <= 0:
+        ctx.events.append(f"Lap {lap}: Racing resumes")
+        ctx.sc_state = None
+        ctx.sc_lap_count = 0
+
+
+# ─── Weather pits helper ──────────────────────────────────────────────────────
+
+def _handle_weather_pits(
+    ctx: RaceContext,
+    lap: int,
+    total_laps: int,
+    circuit,
+    weather: str,
+    player_team_id: Optional[str],
+    rain_prob: float,
+    prev_lap_rain_prob: float,
+    weather_callback: Optional[Callable],
+    pitted_this_lap: set,
+    lap_snapshots: Dict[str, dict],
+) -> None:
+    """Fire the weather callback for player pit decisions and handle AI mid-race weather pits."""
+    # ── Weather callback ──────────────────────────────────────────────────────
+    if weather_callback and ctx.sc_state is None and player_team_id:
+        threshold = detect_weather_threshold(ctx.ws, rain_prob, prev_lap_rain_prob)
+        if threshold:
+            ctx.ws.thresholds_crossed[threshold] = True
+
+            forecast = generate_weather_forecast(
+                rain_prob, ctx.ws.rain_decreasing, ctx.ws.front_rise_rate,
+                ctx.ws.front_decay_rate, ctx.ws.front_arrival_lap, lap,
+            )
+            trend = get_rain_trend(ctx.ws, lap)
+
+            _active_sorted = [d for d, s in ctx.states.items() if not s.dnf]
+            _active_sorted.sort(key=lambda d: ctx.states[d].total_race_time)
+            _pos_lookup = {d: p + 1 for p, d in enumerate(_active_sorted)}
+
+            player_infos_w: list = []
+            for _did, _state in ctx.states.items():
+                if _state.dnf:
+                    continue
+                if ctx.entry_map[_did].team_id == player_team_id:
+                    player_infos_w.append({
+                        "id": _did,
+                        "name": ctx.entry_map[_did].driver.name,
+                        "compound": _state.tyre_compound,
+                        "tyre_age": _state.tyre_age,
+                        "position": _pos_lookup.get(_did, 0),
+                        "circuit_wear": circuit.tire_wear,
+                        "laps_remaining": total_laps - lap,
+                        "driver_obj": ctx.entry_map[_did].driver,
+                        "car_obj": ctx.entry_map[_did].car,
+                        "circuit_obj": circuit,
+                        "allocation": dict(ctx.live_alloc[_did].sets) if _did in ctx.live_alloc else {},
+                    })
+
+            if player_infos_w:
+                weather_meta: dict = {}
+                decisions_w = weather_callback(
+                    lap, total_laps, threshold, player_infos_w,
+                    rain_prob, forecast, trend, weather_meta,
+                )
+
+                if threshold == "warning":
+                    if weather_meta.get("ignored_warning"):
+                        ctx.ws.player_ignored_warning = True
+                    elif all(v is None for v in decisions_w.values()):
+                        ctx.ws.thresholds_crossed["warning"] = False
+                        ctx.ws.warning_cooldown = 3
+
+                for _did, _state in ctx.states.items():
+                    if _state.dnf:
+                        continue
+                    if ctx.entry_map[_did].team_id != player_team_id:
+                        continue
+                    w_strat = decisions_w.get(_did)
+                    if w_strat is not None:
+                        _entry = ctx.entry_map[_did]
+                        next_cmp = w_strat.stints[0].compound.lower()
+                        if _did in ctx.live_alloc:
+                            actual_cmp = ctx.live_alloc[_did].best_available(next_cmp)
+                            if actual_cmp != next_cmp:
+                                ctx.events.append(
+                                    f"Lap {lap}: {_entry.driver.name} — no {next_cmp} sets "
+                                    f"left for weather, switching to {actual_cmp}"
+                                )
+                            next_cmp = actual_cmp
+                        ctx.pit_schedules[_did] = {}
+                        stint_lap = lap
+                        for _i, _stint in enumerate(w_strat.stints[:-1]):
+                            stint_lap += _stint.laps
+                            ctx.pit_schedules[_did][stint_lap] = w_strat.stints[_i + 1].compound.lower()
+                        _execute_pit_stop(
+                            _did, next_cmp, _state.tyre_compound, _state, _entry, circuit, lap,
+                            ctx.pit_stop_log, ctx.events, pitted_this_lap, ctx.pit_recovery_laps_left,
+                            event_suffix=" for weather",
+                        )
+                        if _did in ctx.live_alloc:
+                            ctx.live_alloc[_did].consume(next_cmp)
+                        if _did in lap_snapshots:
+                            lap_snapshots[_did]["pitted"] = True
+
+    # ── AI mid-race weather pit ───────────────────────────────────────────────
+    if rain_prob >= 65 and prev_lap_rain_prob < 65:
+        for _did, _state in ctx.states.items():
+            if _state.dnf:
+                continue
+            if player_team_id and ctx.entry_map[_did].team_id == player_team_id:
+                continue
+            if _state.tyre_compound in ("intermediate", "wet"):
+                continue
+            laps_rem = total_laps - lap
+            if ai_should_pit_for_weather(_state, ctx.entry_map[_did], circuit, rain_prob, laps_rem):
+                _entry = ctx.entry_map[_did]
+                next_cmp = "intermediate" if rain_prob < 82 else "wet"
+                old_cmp = _state.tyre_compound
+                _execute_pit_stop(
+                    _did, next_cmp, old_cmp, _state, _entry, circuit, lap,
+                    ctx.pit_stop_log, ctx.events, pitted_this_lap, ctx.pit_recovery_laps_left,
+                    event_suffix=" for weather",
+                )
+                if _did in lap_snapshots:
+                    lap_snapshots[_did]["pitted"] = True
+                ctx.pit_schedules[_did] = {}
+
+
+# ─── Lap data recording helper ────────────────────────────────────────────────
+
+def _record_lap_data(
+    ctx: RaceContext,
+    lap: int,
+    active: List[str],
+    lap_snapshots: Dict[str, dict],
+    pitted_this_lap: set,
+) -> None:
+    """Track positions, count overtakes, append DriverLapRecords, and log DNF laps."""
+    prev_pos_to_driver = {pos: d for d, pos in ctx.prev_positions.items()}
+    if ctx.sc_state is None:
+        for pos_idx, did in enumerate(active, 1):
+            curr_pos = pos_idx
+            prev_pos = ctx.prev_positions.get(did)
+            if ctx.pit_recovery_laps_left[did] > 0:
+                ctx.pit_recovery_laps_left[did] -= 1
+            if prev_pos is None:
+                continue
+            if lap_snapshots.get(did, {}).get("pitted", False):
+                continue
+            if ctx.pit_recovery_laps_left[did] > 0:
+                continue
+            positions_gained = prev_pos - curr_pos
+            if positions_gained > 0:
+                valid_gains = sum(
+                    1 for p in range(curr_pos, prev_pos)
+                    if prev_pos_to_driver.get(p) not in pitted_this_lap
+                )
+                if valid_gains > 0:
+                    ctx.overtakes_made[did] += valid_gains
+    else:
+        for did in active:
+            if ctx.pit_recovery_laps_left[did] > 0:
+                ctx.pit_recovery_laps_left[did] -= 1
+
+    for pos_idx, did in enumerate(active, 1):
+        ctx.prev_positions[did] = pos_idx
+
+    for pos_idx, did in enumerate(active, 1):
+        if did in lap_snapshots:
+            s = lap_snapshots[did]
+            ctx.lap_data[did].append(DriverLapRecord(
+                lap=lap,
+                lap_time=s["lap_time"],
+                compound=s["compound"],
+                tyre_age=s["tyre_age"],
+                wear_pct=s["wear_pct"],
+                fuel_load=s["fuel_load"],
+                position=pos_idx,
+                pitted=s["pitted"],
+                rain_prob=s.get("rain_prob", 0.0),
+                sc_active=ctx.sc_state,
+            ))
+    for did, state in ctx.states.items():
+        if state.dnf and state.dnf_lap == lap and did not in lap_snapshots:
+            ctx.lap_data[did].append(DriverLapRecord(
+                lap=lap, lap_time=0.0, compound=state.tyre_compound,
+                tyre_age=state.tyre_age, wear_pct=0.0, fuel_load=0.0,
+                position=0, dnf=True,
+            ))
+
+
 # ─── Single lap ───────────────────────────────────────────────────────────────
 
 def _run_lap(
@@ -547,254 +892,19 @@ def _run_lap(
                 ctx.ws.weather_sc_fired = True
                 ctx.events.append(f"Lap {lap}: SAFETY CAR — aquaplaning risk")
 
+    # ── SC phase (gap compression, pit window, countdown/expiry) ─────────────
     if ctx.sc_state is not None:
-        active_sc = [d for d, s in ctx.states.items() if not s.dnf]
-        active_sc.sort(key=lambda d: ctx.states[d].total_race_time)
+        _handle_sc_phase(
+            ctx, lap, total_laps, circuit, weather, player_team_id,
+            rain_prob, sc_pit_callback, pitted_this_lap, lap_snapshots,
+        )
 
-        # ── Gap compression ───────────────────────────────────────────────────
-        if ctx.sc_state == "SC":
-            if ctx.sc_lap_count == 0:
-                if active_sc:
-                    prev_t = ctx.states[active_sc[0]].total_race_time
-                    for _did in active_sc[1:]:
-                        gap = ctx.states[_did].total_race_time - prev_t
-                        new_gap = max(0.15, gap * 0.50)
-                        ctx.states[_did].total_race_time = prev_t + new_gap
-                        prev_t = ctx.states[_did].total_race_time
-            else:
-                if active_sc:
-                    prev_t = ctx.states[active_sc[0]].total_race_time
-                    for _did in active_sc[1:]:
-                        gap = ctx.states[_did].total_race_time - prev_t
-                        ctx.states[_did].total_race_time = prev_t + min(gap, 2.0)
-                        prev_t = ctx.states[_did].total_race_time
-        elif ctx.sc_state == "VSC" and ctx.sc_lap_count == 0:
-            if active_sc:
-                prev_t = ctx.states[active_sc[0]].total_race_time
-                for _did in active_sc[1:]:
-                    gap = ctx.states[_did].total_race_time - prev_t
-                    new_gap = max(0.15, gap * 0.75)
-                    ctx.states[_did].total_race_time = prev_t + new_gap
-                    prev_t = ctx.states[_did].total_race_time
-
-        # ── SC/VSC pit window ─────────────────────────────────────────────────
-        if ctx.sc_state == "SC":
-            ai_pit_prob = [0.70, 0.25, 0.10][min(ctx.sc_lap_count, 2)]
-        else:
-            ai_pit_prob = [0.20, 0.10][min(ctx.sc_lap_count, 1)]
-
-        sc_decisions: Dict[str, Optional[RaceStrategy]] = {}
-        if sc_pit_callback and player_team_id and ctx.sc_lap_count == 0:
-            player_infos = []
-            pos_lookup = {did: pos + 1 for pos, did in enumerate(active_sc)}
-            sc_forecast = generate_weather_forecast(
-                rain_prob, ctx.ws.rain_decreasing, ctx.ws.front_rise_rate,
-                ctx.ws.front_decay_rate, ctx.ws.front_arrival_lap, lap,
-            )
-            sc_trend = get_rain_trend(ctx.ws, lap)
-            for _did, _state in ctx.states.items():
-                if _state.dnf:
-                    continue
-                if ctx.entry_map[_did].team_id == player_team_id:
-                    pos_idx = pos_lookup.get(_did, 1) - 1
-                    gap_ahead = (
-                        round(
-                            ctx.states[_did].total_race_time
-                            - ctx.states[active_sc[pos_idx - 1]].total_race_time, 2
-                        )
-                        if pos_idx > 0 else None
-                    )
-                    gap_behind = (
-                        round(
-                            ctx.states[active_sc[pos_idx + 1]].total_race_time
-                            - ctx.states[_did].total_race_time, 2
-                        )
-                        if pos_idx < len(active_sc) - 1 else None
-                    )
-                    player_infos.append({
-                        "id": _did,
-                        "name": ctx.entry_map[_did].driver.name,
-                        "compound": _state.tyre_compound,
-                        "tyre_age": _state.tyre_age,
-                        "position": pos_lookup.get(_did, 0),
-                        "circuit_wear": circuit.tire_wear,
-                        "laps_remaining": total_laps - lap,
-                        "driver_obj": ctx.entry_map[_did].driver,
-                        "car_obj": ctx.entry_map[_did].car,
-                        "circuit_obj": circuit,
-                        "weather": weather,
-                        "gap_ahead": gap_ahead,
-                        "gap_behind": gap_behind,
-                        "sc_type": ctx.sc_state,
-                        "sc_laps_remaining": ctx.sc_laps_remaining,
-                        "rain_prob": rain_prob,
-                        "forecast": sc_forecast,
-                        "trend": sc_trend,
-                        "allocation": dict(ctx.live_alloc[_did].sets) if _did in ctx.live_alloc else {},
-                    })
-            if player_infos:
-                sc_decisions = sc_pit_callback(lap, total_laps, player_infos)
-
-        pitted_on_sc: set = set()
-        for _did, _state in ctx.states.items():
-            if _state.dnf:
-                continue
-
-            is_player = player_team_id and ctx.entry_map[_did].team_id == player_team_id
-
-            if is_player:
-                sc_strat = sc_decisions.get(_did)
-                should_pit = sc_strat is not None
-            elif lap > 5:
-                should_pit = random.random() < ai_pit_prob
-            else:
-                should_pit = False
-
-            if should_pit:
-                _entry = ctx.entry_map[_did]
-                if is_player and sc_strat is not None:
-                    next_cmp = sc_strat.stints[0].compound.lower()
-                    if _did in ctx.live_alloc:
-                        actual_cmp = ctx.live_alloc[_did].best_available(next_cmp)
-                        if actual_cmp != next_cmp:
-                            ctx.events.append(
-                                f"Lap {lap}: {_entry.driver.name} — no {next_cmp} sets left "
-                                f"under SC, switching to {actual_cmp}"
-                            )
-                        next_cmp = actual_cmp
-                    ctx.pit_schedules[_did] = {}
-                    stint_lap = lap
-                    for i, stint in enumerate(sc_strat.stints[:-1]):
-                        stint_lap += stint.laps
-                        ctx.pit_schedules[_did][stint_lap] = sc_strat.stints[i + 1].compound.lower()
-                else:
-                    next_cmp = "medium"
-                    future_pits = {fl: c for fl, c in ctx.pit_schedules.get(_did, {}).items() if fl > lap}
-                    if future_pits:
-                        next_fl = min(future_pits)
-                        next_cmp = future_pits[next_fl]
-                        del ctx.pit_schedules[_did][next_fl]
-                _execute_pit_stop(
-                    _did, next_cmp, _state.tyre_compound, _state, _entry, circuit, lap,
-                    ctx.pit_stop_log, ctx.events, pitted_this_lap, ctx.pit_recovery_laps_left,
-                    event_suffix=f" under {ctx.sc_state}",
-                )
-                if is_player and _did in ctx.live_alloc:
-                    ctx.live_alloc[_did].consume(next_cmp)
-                pitted_on_sc.add(_did)
-                if _did in lap_snapshots:
-                    lap_snapshots[_did]["pitted"] = True
-
-        ctx.sc_laps_remaining -= 1
-        ctx.sc_lap_count += 1
-        if ctx.sc_laps_remaining <= 0:
-            ctx.events.append(f"Lap {lap}: Racing resumes")
-            ctx.sc_state = None
-            ctx.sc_lap_count = 0
-
-    # ── Weather callback ──────────────────────────────────────────────────────
-    if weather_callback and ctx.sc_state is None and player_team_id:
-        threshold = detect_weather_threshold(ctx.ws, rain_prob, prev_lap_rain_prob)
-        if threshold:
-            ctx.ws.thresholds_crossed[threshold] = True
-
-            forecast = generate_weather_forecast(
-                rain_prob, ctx.ws.rain_decreasing, ctx.ws.front_rise_rate,
-                ctx.ws.front_decay_rate, ctx.ws.front_arrival_lap, lap,
-            )
-            trend = get_rain_trend(ctx.ws, lap)
-
-            _active_sorted = [d for d, s in ctx.states.items() if not s.dnf]
-            _active_sorted.sort(key=lambda d: ctx.states[d].total_race_time)
-            _pos_lookup = {d: p + 1 for p, d in enumerate(_active_sorted)}
-
-            player_infos_w: list = []
-            for _did, _state in ctx.states.items():
-                if _state.dnf:
-                    continue
-                if ctx.entry_map[_did].team_id == player_team_id:
-                    player_infos_w.append({
-                        "id": _did,
-                        "name": ctx.entry_map[_did].driver.name,
-                        "compound": _state.tyre_compound,
-                        "tyre_age": _state.tyre_age,
-                        "position": _pos_lookup.get(_did, 0),
-                        "circuit_wear": circuit.tire_wear,
-                        "laps_remaining": total_laps - lap,
-                        "driver_obj": ctx.entry_map[_did].driver,
-                        "car_obj": ctx.entry_map[_did].car,
-                        "circuit_obj": circuit,
-                        "allocation": dict(ctx.live_alloc[_did].sets) if _did in ctx.live_alloc else {},
-                    })
-
-            if player_infos_w:
-                weather_meta: dict = {}
-                decisions_w = weather_callback(
-                    lap, total_laps, threshold, player_infos_w,
-                    rain_prob, forecast, trend, weather_meta,
-                )
-
-                if threshold == "warning":
-                    if weather_meta.get("ignored_warning"):
-                        ctx.ws.player_ignored_warning = True
-                    elif all(v is None for v in decisions_w.values()):
-                        ctx.ws.thresholds_crossed["warning"] = False
-                        ctx.ws.warning_cooldown = 3
-
-                for _did, _state in ctx.states.items():
-                    if _state.dnf:
-                        continue
-                    if ctx.entry_map[_did].team_id != player_team_id:
-                        continue
-                    w_strat = decisions_w.get(_did)
-                    if w_strat is not None:
-                        _entry = ctx.entry_map[_did]
-                        next_cmp = w_strat.stints[0].compound.lower()
-                        if _did in ctx.live_alloc:
-                            actual_cmp = ctx.live_alloc[_did].best_available(next_cmp)
-                            if actual_cmp != next_cmp:
-                                ctx.events.append(
-                                    f"Lap {lap}: {_entry.driver.name} — no {next_cmp} sets "
-                                    f"left for weather, switching to {actual_cmp}"
-                                )
-                            next_cmp = actual_cmp
-                        ctx.pit_schedules[_did] = {}
-                        stint_lap = lap
-                        for _i, _stint in enumerate(w_strat.stints[:-1]):
-                            stint_lap += _stint.laps
-                            ctx.pit_schedules[_did][stint_lap] = w_strat.stints[_i + 1].compound.lower()
-                        _execute_pit_stop(
-                            _did, next_cmp, _state.tyre_compound, _state, _entry, circuit, lap,
-                            ctx.pit_stop_log, ctx.events, pitted_this_lap, ctx.pit_recovery_laps_left,
-                            event_suffix=" for weather",
-                        )
-                        if _did in ctx.live_alloc:
-                            ctx.live_alloc[_did].consume(next_cmp)
-                        if _did in lap_snapshots:
-                            lap_snapshots[_did]["pitted"] = True
-
-    # ── AI mid-race weather pit ───────────────────────────────────────────────
-    if rain_prob >= 65 and prev_lap_rain_prob < 65:
-        for _did, _state in ctx.states.items():
-            if _state.dnf:
-                continue
-            if player_team_id and ctx.entry_map[_did].team_id == player_team_id:
-                continue
-            if _state.tyre_compound in ("intermediate", "wet"):
-                continue
-            laps_rem = total_laps - lap
-            if ai_should_pit_for_weather(_state, ctx.entry_map[_did], circuit, rain_prob, laps_rem):
-                _entry = ctx.entry_map[_did]
-                next_cmp = "intermediate" if rain_prob < 82 else "wet"
-                old_cmp = _state.tyre_compound
-                _execute_pit_stop(
-                    _did, next_cmp, old_cmp, _state, _entry, circuit, lap,
-                    ctx.pit_stop_log, ctx.events, pitted_this_lap, ctx.pit_recovery_laps_left,
-                    event_suffix=" for weather",
-                )
-                if _did in lap_snapshots:
-                    lap_snapshots[_did]["pitted"] = True
-                ctx.pit_schedules[_did] = {}
+    # ── Weather callback + AI mid-race weather pits ───────────────────────────
+    _handle_weather_pits(
+        ctx, lap, total_laps, circuit, weather, player_team_id,
+        rain_prob, prev_lap_rain_prob, weather_callback,
+        pitted_this_lap, lap_snapshots,
+    )
 
     # ── Overtaking pass ───────────────────────────────────────────────────────
     active = [did for did, s in ctx.states.items() if not s.dnf]
@@ -810,57 +920,7 @@ def _run_lap(
     # ── Record lap data ───────────────────────────────────────────────────────
     active.sort(key=lambda d: ctx.states[d].total_race_time)
 
-    prev_pos_to_driver = {pos: d for d, pos in ctx.prev_positions.items()}
-    if ctx.sc_state is None:
-        for pos_idx, did in enumerate(active, 1):
-            curr_pos = pos_idx
-            prev_pos = ctx.prev_positions.get(did)
-            if ctx.pit_recovery_laps_left[did] > 0:
-                ctx.pit_recovery_laps_left[did] -= 1
-            if prev_pos is None:
-                continue
-            if lap_snapshots.get(did, {}).get("pitted", False):
-                continue
-            if ctx.pit_recovery_laps_left[did] > 0:
-                continue
-            positions_gained = prev_pos - curr_pos
-            if positions_gained > 0:
-                valid_gains = sum(
-                    1 for p in range(curr_pos, prev_pos)
-                    if prev_pos_to_driver.get(p) not in pitted_this_lap
-                )
-                if valid_gains > 0:
-                    ctx.overtakes_made[did] += valid_gains
-    else:
-        for did in active:
-            if ctx.pit_recovery_laps_left[did] > 0:
-                ctx.pit_recovery_laps_left[did] -= 1
-
-    for pos_idx, did in enumerate(active, 1):
-        ctx.prev_positions[did] = pos_idx
-
-    for pos_idx, did in enumerate(active, 1):
-        if did in lap_snapshots:
-            s = lap_snapshots[did]
-            ctx.lap_data[did].append(DriverLapRecord(
-                lap=lap,
-                lap_time=s["lap_time"],
-                compound=s["compound"],
-                tyre_age=s["tyre_age"],
-                wear_pct=s["wear_pct"],
-                fuel_load=s["fuel_load"],
-                position=pos_idx,
-                pitted=s["pitted"],
-                rain_prob=s.get("rain_prob", 0.0),
-                sc_active=ctx.sc_state,
-            ))
-    for did, state in ctx.states.items():
-        if state.dnf and state.dnf_lap == lap and did not in lap_snapshots:
-            ctx.lap_data[did].append(DriverLapRecord(
-                lap=lap, lap_time=0.0, compound=state.tyre_compound,
-                tyre_age=state.tyre_age, wear_pct=0.0, fuel_load=0.0,
-                position=0, dnf=True,
-            ))
+    _record_lap_data(ctx, lap, active, lap_snapshots, pitted_this_lap)
 
 
 # ─── Result finalisation ──────────────────────────────────────────────────────
