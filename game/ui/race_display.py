@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
-from engine.tyres import TYRE_COMPOUNDS
+from engine.core.tyres import TYRE_COMPOUNDS
 from models.circuit import Circuit
 from models.driver import Driver
 from models.team import Team

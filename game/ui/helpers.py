@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from rich.console import Console
-from engine.tyres import TYRE_COMPOUNDS
+from engine.core.tyres import TYRE_COMPOUNDS
 
 console = Console()
 

@@ -15,7 +15,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from engine.race import simulate_race
-from engine.tyres import RaceStrategy, race_laps
+from engine.core.tyres import RaceStrategy, race_laps
 from models.circuit import Circuit
 from models.driver import Driver
 from models.sponsor import Sponsor

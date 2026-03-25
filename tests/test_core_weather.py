@@ -22,10 +22,6 @@ from engine.core.weather import (
     SC_PIT_TYRE_AGE_FRAC,
 )
 from engine.core.tyres import TyreStint, RaceStrategy
-from engine.weather import (
-    _weather_compound_delta as old_compound_delta,
-    _effective_wet_weight as old_wet_weight,
-)
 
 
 class FakeCircuit:
@@ -79,16 +75,6 @@ class TestCompoundPaceDelta(unittest.TestCase):
     RAIN_VALUES = [0, 20, 40, 50, 55, 60, 65, 70, 75, 80, 85, 90, 92, 95, 100]
     COMPOUNDS   = ["soft", "medium", "hard", "intermediate", "wet"]
 
-    def test_parity_with_old_function(self):
-        for cmp in self.COMPOUNDS:
-            for rp in self.RAIN_VALUES:
-                with self.subTest(compound=cmp, rain=rp):
-                    self.assertAlmostEqual(
-                        compound_pace_delta(cmp, rp),
-                        old_compound_delta(cmp, rp),
-                        places=9,
-                    )
-
     def test_slick_no_penalty_when_dry(self):
         from engine.core.tyres import COMPOUND_PACE_DELTA
         for cmp in ("soft", "medium", "hard"):
@@ -124,12 +110,6 @@ class TestCompoundPaceDelta(unittest.TestCase):
 class TestWetWeatherWeight(unittest.TestCase):
     RAIN_VALUES = [0, 20, 40, 50, 60, 65, 70, 80, 90, 100]
 
-    def test_parity_with_old_function(self):
-        for rp in self.RAIN_VALUES:
-            with self.subTest(rain=rp):
-                self.assertAlmostEqual(
-                    wet_weather_weight(rp), old_wet_weight(rp), places=9
-                )
 
     def test_zero_at_low_rain(self):
         self.assertEqual(wet_weather_weight(0), 0.0)

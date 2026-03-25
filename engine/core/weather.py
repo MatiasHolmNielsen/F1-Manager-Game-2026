@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from engine.race_models import SC_PROBABILITY, VSC_PROBABILITY
-from engine.tyres import COMPOUND_PACE_DELTA, TYRE_LIFE_BASE, TyreStint, RaceStrategy
+from engine.core.tyres import COMPOUND_PACE_DELTA, TYRE_LIFE_BASE, TyreStint, RaceStrategy
 
 
 # ── Named constants for rain intensity thresholds ────────────────────────────

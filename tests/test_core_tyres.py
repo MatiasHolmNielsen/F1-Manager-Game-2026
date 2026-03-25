@@ -21,17 +21,6 @@ from engine.core.tyres import (
     ai_strategy,
     best_available_compound,
 )
-from engine.tyres import (
-    adjusted_tyre_life as old_atl,
-    _build_pit_schedule as old_bps,
-    _tyre_score as old_ts,
-    suggest_strategies as old_ss,
-    TYRE_LIFE_BASE as OLD_TYRE_LIFE_BASE,
-    COMPOUND_PACE_DELTA as OLD_COMPOUND_PACE_DELTA,
-    TyreStint as OldTyreStint,
-    RaceStrategy as OldRaceStrategy,
-)
-
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -72,12 +61,6 @@ class FakeEntry:
 # ── Constants parity ──────────────────────────────────────────────────────────
 
 class TestConstantsParity(unittest.TestCase):
-    def test_tyre_life_base_matches_old(self):
-        self.assertEqual(TYRE_LIFE_BASE, OLD_TYRE_LIFE_BASE)
-
-    def test_compound_pace_delta_matches_old(self):
-        self.assertEqual(COMPOUND_PACE_DELTA, OLD_COMPOUND_PACE_DELTA)
-
     def test_default_allocation_has_all_compounds(self):
         self.assertEqual(set(DEFAULT_TYRE_ALLOCATION.keys()),
                          {"soft", "medium", "hard", "intermediate", "wet"})
@@ -247,21 +230,6 @@ class TestAdjustedTyreLife(unittest.TestCase):
     driver = FakeDriver()
     circuit = FakeCircuit()
 
-    def test_parity_with_old_function_dry_compounds(self):
-        for cmp in ("soft", "medium", "hard"):
-            with self.subTest(compound=cmp):
-                new = adjusted_tyre_life(cmp, self.circuit, self.car, self.driver)
-                old = old_atl(cmp, self.circuit, self.car, self.driver)
-                self.assertEqual(new, old)
-
-    def test_parity_with_old_for_rain_compounds(self):
-        for rain_prob in (0, 40, 65, 90):
-            for cmp in ("intermediate", "wet"):
-                with self.subTest(compound=cmp, rain=rain_prob):
-                    new = adjusted_tyre_life(cmp, self.circuit, self.car, self.driver, rain_prob)
-                    old = old_atl(cmp, self.circuit, self.car, self.driver, rain_prob)
-                    self.assertEqual(new, old)
-
     def test_minimum_life_is_3(self):
         class FragileDriver:
             tire_management = 0
@@ -329,18 +297,6 @@ class TestTyreScore(unittest.TestCase):
     def _strat(self, stints):
         return RaceStrategy(stints=[TyreStint(c, l) for c, l in stints])
 
-    def _old_strat(self, stints):
-        return OldRaceStrategy(stints=[OldTyreStint(c, l) for c, l in stints])
-
-    def test_parity_with_old_function_balanced(self):
-        s = self._strat([("medium", 28), ("hard", 29)])
-        o = self._old_strat([("medium", 28), ("hard", 29)])
-        self.assertAlmostEqual(
-            tyre_score(s, self.circuit, "dry", self.car, self.driver),
-            old_ts(o, self.circuit, "dry", self.car, self.driver),
-            places=9,
-        )
-
     def test_empty_strategy_returns_zero(self):
         s = RaceStrategy(stints=[])
         self.assertAlmostEqual(tyre_score(s, self.circuit, "dry", self.car, self.driver), 0.0)
@@ -376,12 +332,6 @@ class TestBuildPitSchedule(unittest.TestCase):
             TyreStint("soft", 15), TyreStint("medium", 20), TyreStint("hard", 22)
         ])
         self.assertEqual(build_pit_schedule(s), {15: "medium", 35: "hard"})
-
-    def test_parity_with_old_function(self):
-        stints = [("soft", 12), ("medium", 18), ("hard", 27)]
-        new_s = RaceStrategy(stints=[TyreStint(*t) for t in stints])
-        old_s = OldRaceStrategy(stints=[OldTyreStint(*t) for t in stints])
-        self.assertEqual(build_pit_schedule(new_s), old_bps(old_s))
 
 
 # ── suggest_strategies ────────────────────────────────────────────────────────
@@ -424,17 +374,6 @@ class TestSuggestStrategies(unittest.TestCase):
         for s in strats:
             for stint in s.stints:
                 self.assertGreater(stint.laps, 0, f"{s.label}: {stint}")
-
-    def test_parity_with_old_function(self):
-        random.seed(42)
-        new_strats = suggest_strategies(self.circuit, "dry", self.car, self.driver)
-        random.seed(42)
-        old_strats = old_ss(self.circuit, "dry", self.car, self.driver)
-        for new, old in zip(new_strats, old_strats):
-            self.assertEqual(new.label, old.label)
-            for ns, os in zip(new.stints, old.stints):
-                self.assertEqual(ns.compound, os.compound)
-                self.assertEqual(ns.laps, os.laps)
 
 
 # ── best_available_compound ───────────────────────────────────────────────────

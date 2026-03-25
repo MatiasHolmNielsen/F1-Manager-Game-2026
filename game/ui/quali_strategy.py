@@ -12,9 +12,9 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.prompt import Prompt
 from rich.table import Table
 
-from engine.tyres import TYRE_COMPOUNDS, TyreStint, RaceStrategy, race_laps, adjusted_tyre_life, suggest_strategies, _tyre_score
+from engine.core.tyres import TYRE_COMPOUNDS, TyreStint, RaceStrategy, race_laps, adjusted_tyre_life, suggest_strategies, tyre_score as _tyre_score
 from engine.qualifying import simulate_knockout_qualifying
-from engine.weather import _weather_compound_delta
+from engine.core.weather import compound_pace_delta as _weather_compound_delta
 from models.circuit import Circuit
 from models.driver import Driver
 from models.team import Team

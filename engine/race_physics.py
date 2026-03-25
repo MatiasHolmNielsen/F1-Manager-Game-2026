@@ -6,7 +6,7 @@ from __future__ import annotations
 import random
 
 from engine.race_models import RaceEntry, OVERTAKE_THRESHOLD, BATTLE_RANGE_S
-from engine.weather import _effective_wet_weight
+from engine.core.weather import wet_weather_weight as _effective_wet_weight
 
 
 def _base_lap_time(entry: RaceEntry, circuit, rain_prob: float) -> float:

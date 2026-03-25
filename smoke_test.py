@@ -16,7 +16,7 @@ from game.loader import load_drivers, load_teams, load_circuits
 from engine.race import (
     RaceEntry, RaceReport, simulate_race, simulate_qualifying, ai_strategy,
 )
-from engine.tyres import DEFAULT_TYRE_ALLOCATION
+from engine.core.tyres import DEFAULT_TYRE_ALLOCATION
 from engine.core.tyres import TyreAllocation
 from engine.development import apply_development
 

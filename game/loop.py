@@ -183,7 +183,7 @@ def main(save_data: dict = None) -> None:
             show_race_header(circuit, race_num, total_races, weather)
 
             # Strategy selection — player picks, AI fills the rest
-            from engine.tyres import DEFAULT_TYRE_ALLOCATION
+            from engine.core.tyres import DEFAULT_TYRE_ALLOCATION
             player_alloc = {did: dict(DEFAULT_TYRE_ALLOCATION)
                             for did in player_team.driver_ids if did in drivers}
             player_strategies = show_strategy_menu(circuit, weather, player_team, drivers,

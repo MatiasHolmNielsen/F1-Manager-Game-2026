@@ -8,7 +8,6 @@ Refactor complete. Codebase is clean and structured.
 - ONE concern per session. If you notice other problems, note them, don't fix them.
 - Never refactor AND add features in the same task
 - Always leave the game in a runnable state after each session
-- Commit after every completed task
 - All new logic needs a corresponding test
 
 ## Structure
