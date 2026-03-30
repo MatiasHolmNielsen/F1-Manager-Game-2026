@@ -1,5 +1,5 @@
 """Mid-race interactive prompts for Safety Car and weather strategy decisions.
-# Functions: _trim_strategy_to_remaining:20  _show_sc_strategy_panel:34  show_sc_strategy_decision:91  _show_weather_strategy_panel:178  show_weather_strategy_decision:234
+# Functions: _trim_strategy_to_remaining:20  _show_sc_strategy_panel:34  show_sc_strategy_decision:91  _print_weather_panel:150  show_weather_info:207  _show_weather_strategy_panel:230  show_weather_strategy_decision:262
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from engine.core.tyres import TYRE_COMPOUNDS, TYRE_LIFE_BASE, TyreStint, RaceStrategy, adjusted_tyre_life
-from engine.core.weather import compound_pace_delta as _weather_compound_delta
 from models.circuit import Circuit
 from .helpers import console, _rain_bar, _fmt_strategy
 from .quali_strategy import _show_pit_panel
@@ -148,6 +147,98 @@ def show_sc_strategy_decision(lap: int, total_laps: int, driver_infos: list) -> 
     return decisions
 
 
+def _print_weather_panel(
+    lap: int, total_laps: int,
+    rain_prob: float, forecast: list, trend: str,
+    title: str, border: str,
+    subtitle: str = "",
+) -> None:
+    """Build and print the shared weather forecast panel.
+
+    Parameters
+    ----------
+    lap:
+        Current lap number (1-based).
+    total_laps:
+        Total laps in the race.
+    rain_prob:
+        Current rain probability (0–100).
+    forecast:
+        List of upcoming rain probabilities (up to 15 entries).
+    trend:
+        One of ``"rising"``, ``"falling"``, or ``"stable"``.
+    title:
+        Text inserted into the panel title bar (e.g. ``"WEATHER"``).
+    border:
+        Rich border style string (e.g. ``"cyan"``).
+    subtitle:
+        Optional bold subtitle prepended inside the panel body.
+        When non-empty, ``[bold]{subtitle}[/bold]`` and a blank line are
+        prepended before the rain-probability line.
+    """
+    remaining = total_laps - lap
+    trend_str = {
+        "rising":  "[red]↑ rising[/red]",
+        "falling": "[cyan]↓ falling[/cyan]",
+        "stable":  "[dim]→ stable[/dim]",
+    }.get(trend, trend)
+
+    header_lines: list = []
+    if subtitle:
+        header_lines += [f"[bold]{subtitle}[/bold]", ""]
+    header_lines += [
+        f"  Rain probability: {_rain_bar(rain_prob, 10)}  ({trend_str})", "",
+        "  Forecast — next 15 laps:",
+    ]
+    for i, fp in enumerate(forecast[:5]):
+        header_lines.append(f"    L{lap + i + 1:<3} {_rain_bar(fp, 10)}")
+    proj = forecast[5:15]
+    if proj:
+        header_lines.append("  [dim]Projected:[/dim]")
+        for j in range(0, len(proj), 2):
+            pair = proj[j:j + 2]
+            parts = []
+            for k, fp in enumerate(pair):
+                filled = max(0, min(6, round(fp / 100 * 6)))
+                bar = "█" * filled + "░" * (6 - filled)
+                clr = "blue" if fp >= 65 else ("cyan" if fp >= 45 else "dim")
+                parts.append(f"L{lap + 6 + j + k:<3} [{clr}]{bar}[/{clr}] {fp:.0f}%")
+            header_lines.append(f"    [dim]{'   '.join(parts)}[/dim]")
+    header_lines.append("")
+    header_lines.append("  [dim]Reliability: high 1–5 laps · moderate 6–10 · low 11–15[/dim]")
+
+    console.print(Panel(
+        "\n".join(header_lines),
+        title=f"[bold]  {title} — LAP {lap} of {total_laps}  ({remaining} laps left)  [/bold]",
+        border_style=border, padding=(0, 1),
+    ))
+
+
+def show_weather_info(
+    lap: int, total_laps: int,
+    rain_prob: float, forecast: list, trend: str,
+) -> None:
+    """Display a read-only weather panel during lap-by-lap mode.
+
+    Shows the rain probability bar, per-lap forecast for the next 15 laps,
+    and a reliability note. No decisions are prompted.
+
+    Parameters
+    ----------
+    lap:
+        Current lap number (1-based).
+    total_laps:
+        Total laps in the race.
+    rain_prob:
+        Current rain probability (0–100).
+    forecast:
+        List of upcoming rain probabilities (up to 15 entries).
+    trend:
+        One of ``"rising"``, ``"falling"``, or ``"stable"``.
+    """
+    _print_weather_panel(lap, total_laps, rain_prob, forecast, trend, title="WEATHER", border="cyan")
+
+
 def _show_weather_strategy_panel(
     circuit, car, driver, driver_label: str,
     remaining_laps: int, rain_prob: float,
@@ -172,7 +263,6 @@ def show_weather_strategy_decision(
     trend: str, meta: Optional[dict] = None,
 ) -> dict:
     console.print()
-    remaining = total_laps - lap
 
     THRESHOLD_STYLES = {
         "warning": ("WEATHER WARNING",    "yellow",      "Conditions approaching change"),
@@ -232,34 +322,7 @@ def show_weather_strategy_decision(
             ]
         return ["Pit now", "Stay out", "Ignore"]
 
-    trend_str = {"rising": "[red]↑ rising[/red]", "falling": "[cyan]↓ falling[/cyan]", "stable": "[dim]→ stable[/dim]"}.get(trend, trend)
-    header_lines = [
-        f"[bold]{subtitle}[/bold]", "",
-        f"  Rain probability: {_rain_bar(rain_prob, 10)}  ({trend_str})", "",
-        "  Forecast — next 15 laps:",
-    ]
-    for i, fp in enumerate(forecast[:5]):
-        header_lines.append(f"    L{lap + i + 1:<3} {_rain_bar(fp, 10)}")
-    proj = forecast[5:15]
-    if proj:
-        header_lines.append("  [dim]Projected:[/dim]")
-        for j in range(0, len(proj), 2):
-            pair = proj[j:j + 2]
-            parts = []
-            for k, fp in enumerate(pair):
-                filled = max(0, min(6, round(fp / 100 * 6)))
-                bar = "█" * filled + "░" * (6 - filled)
-                clr = "blue" if fp >= 65 else ("cyan" if fp >= 45 else "dim")
-                parts.append(f"L{lap + 6 + j + k:<3} [{clr}]{bar}[/{clr}] {fp:.0f}%")
-            header_lines.append(f"    [dim]{'   '.join(parts)}[/dim]")
-    header_lines.append("")
-    header_lines.append("  [dim]Reliability: high 1–5 laps · moderate 6–10 · low 11–15[/dim]")
-
-    console.print(Panel(
-        "\n".join(header_lines),
-        title=f"[bold]  {title} — LAP {lap} of {total_laps}  ({remaining} laps left)  [/bold]",
-        border_style=border, padding=(0, 1),
-    ))
+    _print_weather_panel(lap, total_laps, rain_prob, forecast, trend, title=title, border=border, subtitle=subtitle)
 
     tbl = Table(box=box.SIMPLE, show_header=True, header_style="bold")
     tbl.add_column("Pos", width=4, justify="center")

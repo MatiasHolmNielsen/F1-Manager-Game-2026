@@ -66,7 +66,7 @@ class TestConstantsParity(unittest.TestCase):
                          {"soft", "medium", "hard", "intermediate", "wet"})
 
     def test_tyre_wear_time_scale(self):
-        self.assertAlmostEqual(TYRE_WEAR_TIME_SCALE, 4.5)
+        self.assertAlmostEqual(TYRE_WEAR_TIME_SCALE, 6.0)
 
     def test_tyre_compounds_keys(self):
         self.assertEqual(set(TYRE_COMPOUNDS.keys()),
@@ -268,7 +268,7 @@ class TestTyreWearDelta(unittest.TestCase):
         self.assertAlmostEqual(tyre_wear_delta(20, 20), TYRE_WEAR_TIME_SCALE)
 
     def test_quadratic_at_half_wear(self):
-        # (0.5)² × 4.5 = 1.125
+        # (0.5)² × 6.0 = 1.5
         self.assertAlmostEqual(tyre_wear_delta(10, 20), 0.25 * TYRE_WEAR_TIME_SCALE)
 
     def test_capped_when_overrun(self):

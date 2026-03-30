@@ -1,14 +1,15 @@
-"""Race weekend rendering: results, pit stats, events, lap analysis.
-# Functions: show_race_header:21  show_race_results:47  show_pit_stats:112  show_race_events:161  show_lap_analysis:210  _show_driver_laps:242
+"""Race weekend rendering: results, pit stats, events, lap analysis, live lap display.
+# Functions: show_race_header:21  show_race_results:47  show_pit_stats:112  show_race_events:161  show_lap_analysis:210  _show_driver_laps:242  show_live_lap:415
 """
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from rich import box
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.rule import Rule
 from rich.table import Table
 
 from engine.core.tyres import TYRE_COMPOUNDS
@@ -412,3 +413,157 @@ def _show_driver_laps(driver: Driver, records, report, circuit: Circuit) -> None
 
     console.print(table)
     console.input("\n[dim]Press Enter to go back…[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Live race lap display
+# ---------------------------------------------------------------------------
+
+_COMPOUND_SYMBOL: Dict[str, str] = {
+    "soft": "S", "medium": "M", "hard": "H", "intermediate": "I", "wet": "W",
+}
+_COMPOUND_COLOR: Dict[str, str] = {
+    "soft": "red", "medium": "yellow", "hard": "white", "intermediate": "green", "wet": "blue",
+}
+
+
+def show_live_lap(snap: dict, player_driver_ids: Set[str], lap: int, total_laps: int) -> None:
+    """Render one lap of the live race display.
+
+    Parameters
+    ----------
+    snap:
+        Dict produced by ``_build_lap_snapshot()`` — contains standings,
+        weather data, events, and laps_remaining.
+    player_driver_ids:
+        Set of driver IDs belonging to the human player's team.
+    lap:
+        Current lap number (1-based).
+    total_laps:
+        Total laps in the race.
+    """
+    # ── 1. Header rule ────────────────────────────────────────────────────
+    console.print(Rule(f"[bold]LAP {lap} / {total_laps}[/bold]"))
+
+    # ── 2. Standings table ────────────────────────────────────────────────
+    table = Table(box=box.SIMPLE_HEAD, show_edge=False, header_style="bold white")
+    table.add_column("Pos",      width=3,  justify="right")
+    table.add_column("Driver",   min_width=20)
+    table.add_column("Tyre",     width=5,  justify="center")
+    table.add_column("Age",      width=4,  justify="center")
+    table.add_column("Wear",     width=6,  justify="center")
+    table.add_column("Gap",      width=9,  justify="right")
+    table.add_column("Int",      width=9,  justify="right")
+    table.add_column("Last Lap", width=9,  justify="right")
+
+    # Pre-compute interval to car directly ahead for each driver.
+    intervals: Dict[str, float | None] = {}
+    for i, row in enumerate(snap["standings"]):
+        if row["pos"] == 1:
+            intervals[row["driver_id"]] = None  # leader
+        elif row["lap_time"] == 0:
+            intervals[row["driver_id"]] = None  # DNF — no meaningful interval
+        else:
+            prev = snap["standings"][i - 1]
+            intervals[row["driver_id"]] = row["gap"] - prev["gap"]
+
+    for row in snap["standings"]:
+        pos        = row["pos"]
+        driver_id  = row["driver_id"]
+        name       = row["driver_name"]
+        team_color = row["team_color"]
+        compound   = row["compound"]
+        tyre_age   = row["tyre_age"]
+        wear_pct   = row["wear_pct"]
+        gap        = row["gap"]
+        lap_time   = row["lap_time"]
+        is_player  = row["is_player"]
+
+        # Driver name column
+        if is_player:
+            name_str = f"[{team_color}]★ {name}[/{team_color}]"
+        else:
+            name_str = f"[dim]{name}[/dim]"
+
+        # Tyre compound cell
+        sym   = _COMPOUND_SYMBOL.get(compound, compound[0].upper())
+        color = _COMPOUND_COLOR.get(compound, "white")
+        tyre_str = f"[{color}]{sym}[/{color}]"
+
+        # Wear cell
+        if wear_pct > 75:
+            wear_str = f"[red]{wear_pct:.0f}%[/red]"
+        elif wear_pct >= 50:
+            wear_str = f"[yellow]{wear_pct:.0f}%[/yellow]"
+        else:
+            wear_str = f"[green]{wear_pct:.0f}%[/green]"
+
+        # Gap cell — DNF detected by lap_time == 0 for non-leader
+        if lap_time == 0 and pos > 1:
+            gap_str = "[red]DNF[/red]"
+        elif pos == 1:
+            gap_str = "LEADER"
+        else:
+            gap_str = f"+{gap:.3f}s"
+
+        # Interval cell — gap to car directly ahead
+        interval = intervals.get(driver_id)
+        if lap_time == 0 and pos > 1:
+            int_str = "[red]DNF[/red]"
+        elif pos == 1:
+            int_str = "LEADER"
+        else:
+            int_str = f"+{interval:.3f}s"
+
+        # Last lap time cell
+        lap_time_str = fmt_lap_time(lap_time) if lap_time > 0 else "[dim]—[/dim]"
+
+        table.add_row(
+            str(pos), name_str, tyre_str, str(tyre_age),
+            wear_str, gap_str, int_str, lap_time_str,
+        )
+
+    console.print(table)
+
+    # ── 3. Weather line ───────────────────────────────────────────────────
+    rain_prob = snap["rain_prob"]
+    forecast  = snap["forecast"]
+    trend     = snap["trend"]
+
+    trend_arrow = {"rising": "↗", "falling": "↘", "stable": "→"}.get(trend, "→")
+    trend_label = f"{trend_arrow} {trend}"
+
+    if rain_prob >= 65:
+        warning_str = "  [green]⚠ Damp[/green]"
+    elif rain_prob >= 55:
+        warning_str = "  [yellow]⚠ Wet warning[/yellow]"
+    else:
+        warning_str = ""
+
+    forecast_parts = "  ".join(
+        f"L+{i + 1}:{f:.0f}%" for i, f in enumerate(forecast[:5])
+    )
+    console.print(
+        f"  Weather: {rain_prob:.0f}%  {trend_label}{warning_str}    {forecast_parts}"
+    )
+
+    # ── 4. Events ─────────────────────────────────────────────────────────
+    events = snap.get("events_this_lap", [])
+    # Filter to overtakes, retirements, and pits only
+    relevant = [
+        e for e in events
+        if "overtakes" in e or "retires" in e or "pits" in e
+    ][:5]
+
+    if not relevant:
+        console.print("[dim]  (no notable events this lap)[/dim]")
+    else:
+        for e in relevant:
+            if "overtakes" in e:
+                console.print(f"[cyan]  {e}[/cyan]")
+            elif "retires" in e:
+                console.print(f"[red]  {e}[/red]")
+            elif "pits" in e:
+                console.print(f"[yellow]  {e}[/yellow]")
+            else:
+                console.print(f"[dim]  {e}[/dim]")

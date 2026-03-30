@@ -13,8 +13,9 @@ from game.ui.overview import (
 )
 from game.ui.race_flow import (
     show_circuit_briefing, show_race_transition, show_sponsor_selection,
-    run_race_with_animation,
+    run_race_with_animation, ask_race_mode, run_live_race,
 )
+from game.ui.race_display import show_live_lap
 from game.ui.weather_sc import show_sc_strategy_decision, show_weather_strategy_decision
 
 # Dead function stub kept so existing imports don't break at load time

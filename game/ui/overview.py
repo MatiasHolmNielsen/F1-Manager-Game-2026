@@ -146,7 +146,7 @@ def show_driver_development(
 
         table = Table(box=None, show_header=False, padding=(0, 1))
         table.add_column("Stat", min_width=12)
-        table.add_column("Val", justify="right", width=4)
+        table.add_column("Val", justify="right", min_width=16)
         table.add_column("XP Pool", min_width=18)
         table.add_column("Race XP", width=7, justify="right")
         table.add_column("", width=4)

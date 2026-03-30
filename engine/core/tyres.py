@@ -4,7 +4,7 @@ Consolidated from:
   engine/tyres.py  — all compounds, life tables, strategy generation, AI logic
   engine/race.py   — TyreState (tyre_compound/tyre_age/stint_index fields),
                      TyreAllocation (_best_available_cmp + live_alloc dict),
-                     tyre_wear_delta (wear_frac² × 4.5 formula, line 290)
+                     tyre_wear_delta (wear_frac² × 6.0 formula, line 290)
 
 New additions:
   TyreState      — mutable per-driver tyre tracking, replaces bare fields in
@@ -52,9 +52,9 @@ COMPOUND_PACE_DELTA: Dict[str, float] = {
 
 # Base tyre life in laps, by compound and circuit wear level.
 TYRE_LIFE_BASE: Dict[str, Dict[str, int]] = {
-    "low":    {"hard": 40, "medium": 26, "soft": 20},
-    "medium": {"hard": 30, "medium": 19, "soft": 15},
-    "high":   {"hard": 20, "medium": 13, "soft": 11},
+    "low":    {"hard": 50, "medium": 34, "soft": 24},
+    "medium": {"hard": 38, "medium": 25, "soft": 18},
+    "high":   {"hard": 25, "medium": 16, "soft": 12},
 }
 
 DEFAULT_TYRE_ALLOCATION: Dict[str, int] = {
@@ -62,8 +62,8 @@ DEFAULT_TYRE_ALLOCATION: Dict[str, int] = {
 }
 
 # Quadratic wear model: time penalty = wear_frac² × this constant.
-# At 100% worn: +4.5 s/lap penalty. Extracted from simulate_race() line 290.
-TYRE_WEAR_TIME_SCALE: float = 4.5
+# At 100% worn: +6.0 s/lap penalty. Extracted from simulate_race() line 290.
+TYRE_WEAR_TIME_SCALE: float = 6.0
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -179,13 +179,13 @@ def adjusted_tyre_life(
                    (rain pace penalty handled separately by compound_pace_delta).
     """
     if compound == "intermediate":
-        # ~12 L dry → ~38 L optimal at 65%+ rain
+        # ~15 L dry → ~52 L optimal at 65%+ rain
         t = min(1.0, rain_prob / 65)
-        base = int(_lerp(12, 38, t))
+        base = int(_lerp(15, 52, t))
     elif compound == "wet":
-        # ~12 L dry → ~47 L in heavy rain
+        # ~15 L dry → ~62 L in heavy rain
         t = min(1.0, rain_prob / 100)
-        base = int(_lerp(12, 47, t))
+        base = int(_lerp(15, 62, t))
     else:
         base = TYRE_LIFE_BASE[circuit.tire_wear][compound]
 
@@ -216,7 +216,7 @@ def tyre_wear_delta(tyre_age: int, tyre_life: int) -> float:
 
     Extracted from simulate_race() line 290:
         wear_frac = min(1.0, state.tyre_age / max(1, life))
-        tyre_delta = wear_frac ** 2 * 4.5 + compound_delta
+        tyre_delta = wear_frac ** 2 * 6.0 + compound_delta
     """
     wear_frac = min(1.0, tyre_age / max(1, tyre_life))
     return wear_frac ** 2 * TYRE_WEAR_TIME_SCALE

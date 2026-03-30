@@ -1,5 +1,5 @@
-"""Race weekend flow: circuit briefing, race animation, transition, sponsor selection.
-# Functions: show_circuit_briefing:16  show_race_transition:69  show_sponsor_selection:130  run_race_with_animation:191
+"""Race weekend flow: circuit briefing, race animation, live race, transition, sponsor selection.
+# Functions: show_circuit_briefing:16  show_race_transition:69  show_sponsor_selection:130  run_race_with_animation:191  ask_race_mode:336  _prompt_pit_decisions:365  run_live_race:432
 """
 from __future__ import annotations
 
@@ -15,13 +15,15 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from engine.race import simulate_race
-from engine.core.tyres import RaceStrategy, race_laps
+from engine.core.tyres import RaceStrategy, race_laps, build_pit_schedule
 from models.circuit import Circuit
 from models.driver import Driver
 from models.sponsor import Sponsor
 from models.team import Team
-from .helpers import console
-from .weather_sc import show_sc_strategy_decision, show_weather_strategy_decision
+from .helpers import console, _prompt_int
+from .race_display import show_live_lap
+from .weather_sc import show_sc_strategy_decision, show_weather_strategy_decision, show_weather_info
+from .quali_strategy import _show_pit_panel
 
 
 def show_circuit_briefing(circuit: Circuit, player_team: Team) -> None:
@@ -331,4 +333,222 @@ def run_race_with_animation(
                 else:
                     styled = f"[dim]  -   {event}[/dim]"
                 console.print(styled)
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Live / interactive race mode
+# ---------------------------------------------------------------------------
+
+
+def ask_race_mode() -> str:
+    """Show the race-mode selection menu and return the chosen mode string.
+
+    Returns
+    -------
+    str
+        One of ``"live"`` or ``"quick"``.
+    """
+    menu_text = (
+        "  [bold]1.[/bold] Lap by lap   — full control, pause\n"
+        "                    after every lap\n"
+        "  [bold]2.[/bold] Quick sim    — simulate to end"
+    )
+    console.print(Panel(menu_text, title="RACE MODE", border_style="yellow", padding=(0, 2)))
+    choice = _prompt_int("Select mode", 1, 2)
+    return {1: "live", 2: "quick"}[choice]
+
+
+def _prompt_pit_decisions(
+    snap: dict,
+    entries,
+    circuit: Circuit,
+    player_allocation: Dict[str, Dict[str, int]],
+) -> Dict[str, str]:
+    """Show the full pit strategy panel for each player driver who pressed 'p'.
+
+    Parameters
+    ----------
+    snap:
+        Current lap snapshot from ``_build_lap_snapshot()``.
+    entries:
+        Full race entries list — used to look up ``car`` and ``driver`` objects
+        for each player driver.
+    circuit:
+        The circuit currently being raced.
+    player_allocation:
+        Remaining tyre sets per compound per player driver id.
+
+    Returns
+    -------
+    dict
+        Mapping of driver_id -> compound name for drivers who will pit next lap.
+        The compound is taken from the first stint of the strategy the player
+        selected in the pit panel.
+    """
+    decisions: Dict[str, str] = {}
+    remaining_laps = snap["laps_remaining"]
+    rain_prob = snap["rain_prob"]
+    forecast = snap.get("forecast", [])
+    trend = snap.get("trend", "stable")
+    weather = "wet" if rain_prob >= 50 else "dry"
+
+    # Build a lookup from driver_id -> RaceEntry for O(1) access
+    entry_by_driver_id = {e.driver.id: e for e in entries}
+
+    player_rows = [r for r in snap["standings"] if r["is_player"]]
+
+    for row in player_rows:
+        did = row["driver_id"]
+        driver_label = row["driver_name"]
+
+        entry = entry_by_driver_id.get(did)
+        if entry is None:
+            # Data gap: cannot show panel without car/driver objects
+            continue
+
+        allocation = player_allocation.get(did, {})
+        context_str = f"[yellow]{remaining_laps} laps remaining[/yellow]"
+
+        strategy = _show_pit_panel(
+            circuit=circuit,
+            car=entry.car,
+            driver=entry.driver,
+            driver_label=driver_label,
+            total_laps=remaining_laps,
+            weather=weather,
+            rain_prob=rain_prob,
+            forecast=forecast,
+            trend=trend,
+            title="PIT STRATEGY",
+            context_str=context_str,
+            border_color="yellow",
+            allocation=allocation,
+            allow_no_change=True,
+        )
+
+        if strategy is not None:
+            decisions[did] = strategy.stints[0].compound
+        # if None: player chose no change, don't add to decisions
+
+    return decisions
+
+
+def run_live_race(
+    entries,
+    circuit: Circuit,
+    weather: str,
+    grid,
+    strategies: Dict[str, RaceStrategy],
+    player_team_id: str,
+    player_allocation: dict,
+    mode: str,
+    drivers: dict,
+) -> "RaceReport":
+    """Run an interactive lap-by-lap race.
+
+    Parameters
+    ----------
+    entries:
+        Race entries list passed directly to ``simulate_race()``.
+    circuit:
+        The circuit being raced.
+    weather:
+        Starting weather string (``"dry"`` or ``"wet"``).
+    grid:
+        Starting grid order (list of driver IDs).
+    strategies:
+        Pre-race strategies keyed by player driver ID only.
+    player_team_id:
+        The human player's team ID.
+    player_allocation:
+        Remaining tyre sets per compound per player driver ID.
+    mode:
+        Unused — kept for call-site compatibility.
+    drivers:
+        Driver objects dict (unused in rendering, passed for completeness).
+
+    Returns
+    -------
+    RaceReport
+        The completed race report from ``simulate_race()``.
+    """
+    player_driver_ids: set = {did for did in strategies}
+
+    # Mutable closure state — list so inner function can rebind the value
+    skip_to_end = [False]
+
+    def _sc_callback(lap, total_laps, driver_infos):
+        return show_sc_strategy_decision(lap, total_laps, driver_infos)
+
+    def _weather_callback(lap, total_laps, threshold, driver_infos, rain_prob, forecast, trend, meta=None):
+        return show_weather_strategy_decision(
+            lap, total_laps, threshold, driver_infos, rain_prob, forecast, trend, meta,
+        )
+
+    def lap_callback(lap: int, total_laps: int, snap: dict) -> Optional[Dict[str, str]]:
+        # If user chose to skip to end, silently process remaining laps
+        if skip_to_end[0]:
+            return None
+
+        show_live_lap(snap, player_driver_ids, lap, total_laps)
+
+        # Compute planned pits for the next lap from each player driver's strategy
+        planned: Dict[str, str] = {
+            did: build_pit_schedule(strat)[lap + 1]
+            for did, strat in strategies.items()
+            if lap + 1 in build_pit_schedule(strat)
+        }
+
+        if planned:
+            # Build a name lookup from the snapshot standings
+            name_by_id = {
+                row["driver_id"]: row["driver_name"]
+                for row in snap["standings"]
+            }
+            for did, compound in planned.items():
+                driver_label = name_by_id.get(did, did)
+                console.print(
+                    f"  [yellow]Planned pit next lap:[/yellow]"
+                    f" {driver_label} -> {compound.capitalize()}"
+                )
+
+        if planned:
+            prompt_hint = "  [dim]p=pit  w=weather  s=skip  Enter=execute planned:[/dim] "
+        else:
+            prompt_hint = "  [dim]p=pit  w=weather  s=skip  Enter=next lap:[/dim] "
+
+        pit_decisions: Dict[str, str] = {}
+        while True:
+            console.print(prompt_hint, end="")
+            user_input = input().strip().lower()
+            if user_input == "p":
+                pit_decisions = _prompt_pit_decisions(snap, entries, circuit, player_allocation)
+                break
+            elif user_input == "w":
+                show_weather_info(
+                    lap, total_laps,
+                    snap["rain_prob"], snap["forecast"], snap["trend"],
+                )
+                console.print("  [dim]b=back:[/dim] ", end="")
+                input()
+            elif user_input == "s":
+                skip_to_end[0] = True
+                break
+            else:
+                # Enter pressed — execute planned pits if any, otherwise advance
+                return planned if planned else None
+
+        return pit_decisions if pit_decisions else None
+
+    report = simulate_race(
+        entries, circuit, weather,
+        grid=grid,
+        strategies=strategies,
+        player_team_id=player_team_id,
+        sc_pit_callback=_sc_callback,
+        weather_callback=_weather_callback,
+        player_allocation=player_allocation,
+        lap_callback=lap_callback,
+    )
     return report

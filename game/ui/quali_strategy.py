@@ -258,7 +258,8 @@ def _show_pit_panel(
     context_str: str = "",
     border_color: str = "cyan",
     allocation: Optional[Dict[str, int]] = None,
-) -> RaceStrategy:
+    allow_no_change: bool = False,
+) -> Optional[RaceStrategy]:
     """Universal pit strategy panel — all 5 compounds always shown."""
     presets = suggest_strategies(circuit, weather, car, driver, rain_prob=rain_prob)
     if weather == "wet":
@@ -352,12 +353,18 @@ def _show_pit_panel(
             lines.append(f"  [[bold]{i + 1}[/bold]] {preset.label:<16} {_fmt_strategy(preset)}{rec}")
     custom_num = len(presets) + 1
     lines.append(f"  [[bold]{custom_num}[/bold]] Custom — choose any compound manually")
+    if allow_no_change:
+        lines.append("  [[bold]N[/bold]] No change — keep current strategy")
 
     console.print()
     console.print(Panel("\n".join(lines), border_style=border_color, padding=(0, 2)))
 
     valid_choices = [str(i + 1) for i in range(len(presets))] + [str(custom_num)]
+    if allow_no_change:
+        valid_choices.append("n")
     choice = Prompt.ask("Strategy", choices=valid_choices)
+    if allow_no_change and choice == "n":
+        return None
     choice_idx = int(choice) - 1
     if choice_idx < len(presets):
         return presets[choice_idx]

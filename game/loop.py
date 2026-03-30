@@ -20,6 +20,7 @@ from .ui import (
     show_quali_results, show_strategy_menu, show_strategy_summary,
     show_circuit_briefing, show_race_transition, show_sponsor_selection,
     run_knockout_qualifying_with_animation, run_race_with_animation,
+    ask_race_mode, run_live_race,
     show_team_creator,
 )
 from .management import management_menu
@@ -110,7 +111,16 @@ def show_team_selection(
 ) -> str:
     console.print(Panel("[bold]SELECT YOUR TEAM[/bold]", border_style="yellow", padding=(0, 2)))
 
-    custom_team_id = _maybe_add_custom_team(teams, drivers, force=True) if auto_create else None
+    if auto_create:
+        custom_team_id = _maybe_add_custom_team(teams, drivers, force=True)
+        selected = teams[custom_team_id]
+        console.print(
+            f"\nYou built [{selected.color}]{selected.name}[/{selected.color}]"
+            f" from the ground up — now prove it.\n"
+        )
+        return custom_team_id
+
+    custom_team_id = None
 
     table = Table(box=box.ROUNDED, header_style="bold yellow", show_lines=False)
     table.add_column("#", width=3, justify="center")
@@ -270,13 +280,24 @@ def main(save_data: dict = None, create_team: bool = False, slot: int = 1) -> No
                 if entry.driver.id not in strategies:
                     strategies[entry.driver.id] = ai_strategy(entry, circuit, weather)
 
-            console.input("\n[dim]Press Enter to start the race…[/dim]")
-            report = run_race_with_animation(
-                entries, circuit, weather,
-                grid=grid, strategies=strategies,
-                player_team_id=player_team_id,
-                player_allocation=player_alloc,
-            )
+            race_mode = ask_race_mode()
+            if race_mode == "quick":
+                console.input("\n[dim]Press Enter to start the race…[/dim]")
+                report = run_race_with_animation(
+                    entries, circuit, weather,
+                    grid=grid, strategies=strategies,
+                    player_team_id=player_team_id,
+                    player_allocation=player_alloc,
+                )
+            else:
+                report = run_live_race(
+                    entries, circuit, weather,
+                    grid=grid, strategies=strategies,
+                    player_team_id=player_team_id,
+                    player_allocation=player_alloc,
+                    mode=race_mode,
+                    drivers=drivers,
+                )
             results = report.results
 
             # ── View 1: Race Result ──────────────────────────────────

@@ -86,6 +86,43 @@ def _fmt_strategy(strategy) -> str:
 # Team creator
 # ---------------------------------------------------------------------------
 
+_TEAM_PRESETS = [
+    {
+        "name": "Garage to Grid",
+        "tagline": "Two mates, a rented workshop, and a dream.",
+        "story": (
+            "You and your old racing buddy converted a warehouse on the edge of town into a\n"
+            "race shop. Budget is tight, the car is slow, but every point feels like a victory.\n"
+            "Can you grow this into something real?"
+        ),
+        "car_overall": 58,
+        "budget": 65,
+    },
+    {
+        "name": "The Comeback",
+        "tagline": "Once a race winner. Now rebuilding from the ashes.",
+        "story": (
+            "Your team won races in the V8 era but a sponsorship collapse nearly ended you.\n"
+            "You've scraped together funding, recruited solid engineers, and you're back on\n"
+            "the grid. The championship is a long shot — for now."
+        ),
+        "car_overall": 74,
+        "budget": 145,
+    },
+    {
+        "name": "Billionaire's Bet",
+        "tagline": "Unlimited budget. Zero excuses.",
+        "story": (
+            "A tech mogul decided F1 was his next conquest. You've been hired as team\n"
+            "principal with a mandate to win — fast. The car is competitive, the chequebook\n"
+            "is open. Now prove it was worth the investment."
+        ),
+        "car_overall": 86,
+        "budget": 250,
+    },
+]
+
+
 _TEAM_COLORS: List[str] = [
     "red", "green", "blue", "yellow", "magenta", "cyan", "white",
     "bright_red", "bright_green", "bright_blue", "bright_yellow",
@@ -119,19 +156,76 @@ def _derive_car_stat(overall: int) -> int:
     return _clamp(overall + random.randint(-3, 3))
 
 
+def _print_driver_table(driver_list: List[Tuple[str, "Driver"]], color: str) -> None:
+    """Render a Rich table of drivers for the team-creator picker."""
+    t = Table(box=box.SIMPLE_HEAD, show_edge=False, header_style="bold dim")
+    t.add_column("#", justify="right", width=3)
+    t.add_column("Name", style=color, min_width=16, no_wrap=True)
+    t.add_column("Nat", justify="center", width=4)
+    t.add_column("Age", justify="center", width=4)
+    t.add_column("OVR", justify="center", width=4, style="bold")
+    t.add_column("POT", justify="center", width=4, style="green")
+    t.add_column("Salary", justify="right", width=7)
+    t.add_column("Pace", justify="center", width=5)
+    t.add_column("Qual", justify="center", width=5)
+    t.add_column("Con", justify="center", width=4)
+    t.add_column("Ovt", justify="center", width=4)
+    t.add_column("Def", justify="center", width=4)
+    t.add_column("TM", justify="center", width=4)
+
+    for idx, (_, d) in enumerate(driver_list, 1):
+        t.add_row(
+            str(idx),
+            d.name,
+            d.nationality[:3].upper(),
+            str(d.age),
+            str(d.overall),
+            str(d.potential),
+            f"{d.salary} M€",
+            str(d.pace),
+            str(d.qualifying_pace),
+            str(d.consistency),
+            str(d.overtaking),
+            str(d.defending),
+            str(d.tire_management),
+        )
+    console.print(t)
+
+
 def _collect_team_details(drivers: Dict[str, "Driver"]) -> Tuple["Team", List[str]]:
     """Single pass through all team-creation prompts. Returns (Team, [driver_id_1, driver_id_2])."""
 
-    # ── Step 1: Team name ────────────────────────────────────────────────
-    console.print(Rule("[dim]Step 1 of 7 — Team name[/dim]"))
+    # ── Step 1: Storyline preset ─────────────────────────────────────────
+    console.print(Rule("[dim]Step 1 of 6 — Choose your story[/dim]"))
+    for idx, preset in enumerate(_TEAM_PRESETS, 1):
+        panel_body = (
+            f"[bold italic]{preset['tagline']}[/bold italic]\n\n"
+            f"[dim]{preset['story']}[/dim]\n\n"
+            f"[bold]Car: {preset['car_overall']}/100  |  Budget: {preset['budget']} M€[/bold]"
+        )
+        console.print(
+            Panel(
+                panel_body,
+                title=f"{idx}. {preset['name']}",
+                border_style="dim",
+            )
+        )
+    preset_choice = _prompt_int("Choose your story", 1, 3)
+    preset = _TEAM_PRESETS[preset_choice - 1]
+    car_overall = preset["car_overall"]
+    budget = preset["budget"]
+    preset_name = preset["name"]
+
+    # ── Step 2: Team name ────────────────────────────────────────────────
+    console.print(Rule("[dim]Step 2 of 6 — Team name[/dim]"))
     team_name = ""
     while not (2 <= len(team_name) <= 30):
         team_name = _prompt("Team name (2–30 chars):")
         if not (2 <= len(team_name) <= 30):
             console.print("[red]  Must be 2–30 characters.[/red]")
 
-    # ── Step 2: Short name ───────────────────────────────────────────────
-    console.print(Rule("[dim]Step 2 of 7 — Short name[/dim]"))
+    # ── Step 3: Short name ───────────────────────────────────────────────
+    console.print(Rule("[dim]Step 3 of 6 — Short name[/dim]"))
     short_name = ""
     while not (2 <= len(short_name) <= 6):
         raw = _prompt("Short name (2–6 chars, e.g. APX):")
@@ -139,24 +233,15 @@ def _collect_team_details(drivers: Dict[str, "Driver"]) -> Tuple["Team", List[st
         if not (2 <= len(short_name) <= 6):
             console.print("[red]  Must be 2–6 characters.[/red]")
 
-    # ── Step 3: Color ────────────────────────────────────────────────────
-    console.print(Rule("[dim]Step 3 of 7 — Team color[/dim]"))
+    # ── Step 4: Color ────────────────────────────────────────────────────
+    console.print(Rule("[dim]Step 4 of 6 — Team color[/dim]"))
     for idx, color in enumerate(_TEAM_COLORS, 1):
         console.print(f"  [{color}]{idx:>2}. {color}[/{color}]")
     color_choice = _prompt_int("Pick a color number", 1, len(_TEAM_COLORS))
     chosen_color = _TEAM_COLORS[color_choice - 1]
 
-    # ── Step 4: Car overall rating ───────────────────────────────────────
-    console.print(Rule("[dim]Step 4 of 7 — Car overall rating[/dim]"))
-    console.print("[dim]  (55 = backmarker, 92 = top team)[/dim]")
-    car_overall = _prompt_int("Car overall rating", 55, 92)
-
-    # ── Step 5: Budget ───────────────────────────────────────────────────
-    console.print(Rule("[dim]Step 5 of 7 — Budget[/dim]"))
-    budget = _prompt_int("Starting budget in M€", 50, 300)
-
-    # ── Step 6: Driver 1 ─────────────────────────────────────────────────
-    console.print(Rule("[dim]Step 6 of 7 — Driver 1[/dim]"))
+    # ── Step 5: Driver 1 ─────────────────────────────────────────────────
+    console.print(Rule("[dim]Step 5 of 6 — Driver 1[/dim]"))
     # Show drivers not already on a full 2-driver team.
     team_counts: Dict[str, int] = {}
     for d in drivers.values():
@@ -168,18 +253,16 @@ def _collect_team_details(drivers: Dict[str, "Driver"]) -> Tuple["Team", List[st
         if d.team_id is None or team_counts.get(d.team_id, 0) < 2
     ]
 
-    for idx, (did, d) in enumerate(free_drivers, 1):
-        console.print(f"  {idx:>2}. [{chosen_color}]{d.name}[/{chosen_color}]  [dim]OVR {d.overall}[/dim]")
+    _print_driver_table(free_drivers, chosen_color)
     d1_idx = _prompt_int("Select Driver 1", 1, len(free_drivers))
     driver1_id, driver1 = free_drivers[d1_idx - 1]
 
-    # ── Step 7: Driver 2 ─────────────────────────────────────────────────
-    console.print(Rule("[dim]Step 7 of 7 — Driver 2[/dim]"))
+    # ── Step 6: Driver 2 ─────────────────────────────────────────────────
+    console.print(Rule("[dim]Step 6 of 6 — Driver 2[/dim]"))
     remaining: List[Tuple[str, "Driver"]] = [
         (did, d) for did, d in free_drivers if did != driver1_id
     ]
-    for idx, (did, d) in enumerate(remaining, 1):
-        console.print(f"  {idx:>2}. [{chosen_color}]{d.name}[/{chosen_color}]  [dim]OVR {d.overall}[/dim]")
+    _print_driver_table(remaining, chosen_color)
     d2_idx = _prompt_int("Select Driver 2", 1, len(remaining))
     driver2_id, driver2 = remaining[d2_idx - 1]
 
@@ -200,13 +283,13 @@ def _collect_team_details(drivers: Dict[str, "Driver"]) -> Tuple["Team", List[st
         name=team_name,
         short_name=short_name,
         color=chosen_color,
-        budget=float(budget),
+        budget=float(preset["budget"]),
         car=car,
         driver_ids=[driver1_id, driver2_id],
         sponsor_id=None,
     )
 
-    return team, [driver1_id, driver2_id], chosen_color, driver1, driver2, car_overall
+    return team, [driver1_id, driver2_id], chosen_color, driver1, driver2, car_overall, preset_name
 
 
 def show_team_creator(drivers: Dict[str, "Driver"]) -> Tuple["Team", List[str]]:
@@ -214,13 +297,13 @@ def show_team_creator(drivers: Dict[str, "Driver"]) -> Tuple["Team", List[str]]:
     while True:
         console.print(
             Panel(
-                "[bold yellow]Let's build your team from scratch.[/bold yellow]",
+                "[bold yellow]Choose your story, name your team, pick your drivers.[/bold yellow]",
                 title="[bold]CREATE YOUR TEAM[/bold]",
                 border_style="yellow",
             )
         )
 
-        team, driver_ids, chosen_color, driver1, driver2, car_overall = _collect_team_details(drivers)
+        team, driver_ids, chosen_color, driver1, driver2, car_overall, preset_name = _collect_team_details(drivers)
 
         # ── Confirmation summary ─────────────────────────────────────────
         console.print(Rule("[dim]Summary[/dim]"))
@@ -228,7 +311,8 @@ def show_team_creator(drivers: Dict[str, "Driver"]) -> Tuple["Team", List[str]]:
             f"  Team name   : [{chosen_color}]{team.name}[/{chosen_color}]",
             f"  Short name  : [{chosen_color}]{team.short_name}[/{chosen_color}]",
             f"  Color       : [{chosen_color}]{chosen_color}[/{chosen_color}]",
-            f"  Car overall : [bold]{car_overall}[/bold]  [dim](engine {team.car.engine} / aero {team.car.aerodynamics} / grip {team.car.mechanical_grip} / rel {team.car.reliability} / deg {team.car.tire_deg} / brk {team.car.braking} / pit {team.car.pit_crew})[/dim]",
+            f"  Story       : [bold]{preset_name}[/bold]",
+            f"  Car overall : {car_overall}  [dim](engine {team.car.engine} / aero {team.car.aerodynamics} / grip {team.car.mechanical_grip} / rel {team.car.reliability} / deg {team.car.tire_deg} / brk {team.car.braking} / pit {team.car.pit_crew})[/dim]",
             f"  Budget      : [bold]{int(team.budget)} M€[/bold]",
             f"  Driver 1    : [{chosen_color}]{driver1.name}[/{chosen_color}]  [dim]OVR {driver1.overall}[/dim]",
             f"  Driver 2    : [{chosen_color}]{driver2.name}[/{chosen_color}]  [dim]OVR {driver2.overall}[/dim]",
