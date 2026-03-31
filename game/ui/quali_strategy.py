@@ -388,10 +388,6 @@ def show_strategy_menu(
             rain_prob=0.0 if weather != "wet" else 75.0,
             allocation=drv_alloc,
         )
-        # Deduct starting set after panel returns
-        if allocation and driver.id in allocation:
-            start_cmp = result[driver.id].stints[0].compound
-            allocation[driver.id][start_cmp] = max(0, allocation[driver.id].get(start_cmp, 0) - 1)
     return result
 
 

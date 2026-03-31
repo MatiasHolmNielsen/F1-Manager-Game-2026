@@ -11,6 +11,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from engine.core.tyres import TYRE_COMPOUNDS, TYRE_LIFE_BASE, TyreStint, RaceStrategy, adjusted_tyre_life
+from engine.core.weather import compound_pace_delta as _weather_compound_delta
 from models.circuit import Circuit
 from .helpers import console, _rain_bar, _fmt_strategy
 from .quali_strategy import _show_pit_panel

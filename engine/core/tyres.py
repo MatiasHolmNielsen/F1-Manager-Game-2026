@@ -144,12 +144,22 @@ class TyreAllocation:
     def best_available(self, preferred: str) -> str:
         """Return preferred if sets remain, else the compound with the most sets.
 
+        If preferred is a rain compound and is unavailable, try the other rain
+        compound before falling back to any dry compound.
+
         Mirrors _best_available_cmp() from engine/race.py lines 75–80.
         """
         if self.sets.get(preferred, 0) > 0:
             return preferred
         if not self.sets:
             return preferred
+        # If preferred was a rain compound, try the other rain compound first
+        rain_compounds = ("intermediate", "wet")
+        if preferred in rain_compounds:
+            for rain_cmp in rain_compounds:
+                if rain_cmp != preferred and self.sets.get(rain_cmp, 0) > 0:
+                    return rain_cmp
+        # Fall back to compound with most sets remaining
         return max(self.sets, key=lambda c: self.sets[c])
 
     def has_any(self) -> bool:

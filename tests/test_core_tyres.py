@@ -186,6 +186,33 @@ class TestTyreAllocation(unittest.TestCase):
         alloc = TyreAllocation.from_dict({})
         self.assertEqual(alloc.best_available("medium"), "medium")
 
+    def test_best_available_prefers_other_rain_compound_when_preferred_exhausted(self):
+        # Fix: When preferred is "intermediate" and sets=0, but "wet" has sets → returns "wet"
+        alloc = TyreAllocation.from_dict({"intermediate": 0, "wet": 2, "soft": 1})
+        self.assertEqual(alloc.best_available("intermediate"), "wet")
+
+    def test_best_available_wet_exhausted_prefers_intermediate(self):
+        # Fix: When preferred is "wet" and sets=0, but "intermediate" has sets → returns "intermediate"
+        alloc = TyreAllocation.from_dict({"wet": 0, "intermediate": 2, "hard": 1})
+        self.assertEqual(alloc.best_available("wet"), "intermediate")
+
+    def test_best_available_both_rain_exhausted_falls_back_to_dry(self):
+        # Fix: When preferred is "intermediate" and both rain compounds are 0, but dry compounds have sets
+        # → returns a dry compound (existing fallback still works)
+        alloc = TyreAllocation.from_dict(
+            {"intermediate": 0, "wet": 0, "soft": 2, "medium": 1, "hard": 0}
+        )
+        result = alloc.best_available("intermediate")
+        self.assertIn(result, ("soft", "medium", "hard"))
+        # Verify it's the max available (soft has 2 sets)
+        self.assertEqual(result, "soft")
+
+    def test_best_available_dry_compound_no_regression(self):
+        # Fix: When preferred is "soft" (dry) and sets=0 → still returns max-set dry compound (no regression)
+        alloc = TyreAllocation.from_dict({"soft": 0, "medium": 2, "hard": 1, "intermediate": 1})
+        # Should fall back to medium (2 sets) not intermediate (1 set)
+        self.assertEqual(alloc.best_available("soft"), "medium")
+
     def test_has_any_true_with_sets(self):
         self.assertTrue(TyreAllocation.default().has_any())
 

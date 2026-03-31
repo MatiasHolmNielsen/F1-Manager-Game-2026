@@ -15,7 +15,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from engine.race import simulate_race
-from engine.core.tyres import RaceStrategy, race_laps, build_pit_schedule
+from engine.core.tyres import RaceStrategy, race_laps
 from models.circuit import Circuit
 from models.driver import Driver
 from models.sponsor import Sponsor
@@ -493,31 +493,7 @@ def run_live_race(
 
         show_live_lap(snap, player_driver_ids, lap, total_laps)
 
-        # Compute planned pits for the next lap from each player driver's strategy
-        planned: Dict[str, str] = {
-            did: build_pit_schedule(strat)[lap + 1]
-            for did, strat in strategies.items()
-            if lap + 1 in build_pit_schedule(strat)
-        }
-
-        if planned:
-            # Build a name lookup from the snapshot standings
-            name_by_id = {
-                row["driver_id"]: row["driver_name"]
-                for row in snap["standings"]
-            }
-            for did, compound in planned.items():
-                driver_label = name_by_id.get(did, did)
-                console.print(
-                    f"  [yellow]Planned pit next lap:[/yellow]"
-                    f" {driver_label} -> {compound.capitalize()}"
-                )
-
-        if planned:
-            prompt_hint = "  [dim]p=pit  w=weather  s=skip  Enter=execute planned:[/dim] "
-        else:
-            prompt_hint = "  [dim]p=pit  w=weather  s=skip  Enter=next lap:[/dim] "
-
+        prompt_hint = "  [dim]p=pit  w=weather  s=skip  Enter=next lap:[/dim] "
         pit_decisions: Dict[str, str] = {}
         while True:
             console.print(prompt_hint, end="")
@@ -536,8 +512,8 @@ def run_live_race(
                 skip_to_end[0] = True
                 break
             else:
-                # Enter pressed — execute planned pits if any, otherwise advance
-                return planned if planned else None
+                # Enter pressed — engine executes its own scheduled pits
+                return None
 
         return pit_decisions if pit_decisions else None
 
@@ -547,7 +523,7 @@ def run_live_race(
         strategies=strategies,
         player_team_id=player_team_id,
         sc_pit_callback=_sc_callback,
-        weather_callback=_weather_callback,
+        weather_callback=None,
         player_allocation=player_allocation,
         lap_callback=lap_callback,
     )

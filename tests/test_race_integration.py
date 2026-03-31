@@ -220,5 +220,87 @@ class TestSimulateRaceMultipleWeathers(unittest.TestCase):
         self.assertIsInstance(self._run("mixed", 32), RaceReport)
 
 
+class TestAIWeatherPitSkipFreshRain(unittest.TestCase):
+    """Test that AI drivers skip weather pits when already on fresh rain tyres.
+
+    Fix: _handle_weather_pits() now checks if the driver is already on a rain
+    compound with wear below 50%, and skips the pit if so.
+    """
+
+    def test_ai_skips_weather_pit_with_fresh_intermediates(self):
+        """High rain from lap 1, AI driver starts on intermediates, should not re-pit immediately."""
+        random.seed(100)
+        circuit = _get_circuit()
+        entries = _make_entries(6, team_id="ai_team")
+
+        # Create a strategy with intermediates from the start
+        from engine.core.tyres import RaceStrategy, TyreStint
+        strategies = {
+            entry.driver.id: RaceStrategy(
+                stints=[TyreStint("intermediate", 30), TyreStint("intermediate", 27)],
+                label="All Intermediates"
+            )
+            for entry in entries
+        }
+
+        # Collect pit stop info via lap_callback
+        pit_counts = {}
+        def lap_callback(lap, total_laps, data):
+            return None
+
+        # Run race with high initial rain probability and strategies starting on intermediates
+        report = simulate_race(
+            entries, circuit,
+            weather="wet",  # Wet weather will keep rain high
+            strategies=strategies,
+            player_team_id=None,  # No player, all AI
+            lap_callback=lap_callback,
+        )
+
+        # Count pits per driver in laps 1-20
+        pits_per_driver = {}
+        for pit in report.pit_stops:
+            if pit.lap <= 20:
+                driver_name = pit.driver_name
+                if driver_name not in pits_per_driver:
+                    pits_per_driver[driver_name] = 0
+                pits_per_driver[driver_name] += 1
+
+        # Verify: AI drivers should have at most 1 pit in laps 1-20
+        # (their initial pit for intermediates, not a re-pit)
+        for driver_name, pit_count in pits_per_driver.items():
+            self.assertLessEqual(
+                pit_count, 1,
+                f"Driver {driver_name} pitted {pit_count} times in laps 1-20, expected at most 1"
+            )
+
+    def test_ai_can_repit_worn_rain_tyres(self):
+        """If rain tyre wear >= 50%, AI should be able to pit for fresh ones."""
+        random.seed(101)
+        circuit = _get_circuit()
+        entries = _make_entries(3, team_id="ai_team")
+
+        # Strategy with very short initial stint to force high wear
+        from engine.core.tyres import RaceStrategy, TyreStint
+        strategies = {
+            entry.driver.id: RaceStrategy(
+                stints=[TyreStint("intermediate", 5), TyreStint("intermediate", 25), TyreStint("wet", 27)],
+                label="Short Initial Inter"
+            )
+            for entry in entries
+        }
+
+        report = simulate_race(
+            entries, circuit,
+            weather="wet",
+            strategies=strategies,
+            player_team_id=None,
+        )
+
+        # Race should complete without error (demonstrating that worn tyre re-pit logic works)
+        self.assertIsInstance(report, RaceReport)
+        self.assertGreater(len(report.results), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

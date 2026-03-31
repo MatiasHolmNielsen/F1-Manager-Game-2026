@@ -680,7 +680,18 @@ def _handle_weather_pits(
             if player_team_id and ctx.entry_map[_did].team_id == player_team_id:
                 continue
             if _state.tyre_compound in ("intermediate", "wet"):
-                continue
+                # Already on rain rubber — skip if tyre is still fresh (< 50% wear)
+                _entry_w = ctx.entry_map[_did]
+                _life_w = adjusted_tyre_life(
+                    _state.tyre_compound, circuit,
+                    _entry_w.car, _entry_w.driver, rain_prob=rain_prob,
+                )
+                _wear_frac_w = min(1.0, _state.tyre_age / max(1, _life_w))
+                if _wear_frac_w < 0.5:
+                    continue
+                # Worn rain tyre: fall through so the driver can re-pit for
+                # a fresh set of the correct rain compound
+
             laps_rem = total_laps - lap
             if ai_should_pit_for_weather(_state, ctx.entry_map[_did], circuit, rain_prob, laps_rem):
                 _entry = ctx.entry_map[_did]
