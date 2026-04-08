@@ -130,8 +130,8 @@ class TestPromptPitDecisions(unittest.TestCase):
             result = _prompt_pit_decisions(snap, entries, circuit, player_allocation)
         return result, mock_panel
 
-    def test_returns_compound_from_panel_strategy(self):
-        """The compound returned for a driver is stints[0].compound of the panel result."""
+    def test_returns_strategy_from_panel(self):
+        """The full RaceStrategy is returned for each player driver who chose a new strategy."""
         snap = _make_snap(driver_ids=("d0",), laps_remaining=20)
         entries = [_make_entry("d0")]
         circuit = _StubCircuit()
@@ -140,7 +140,7 @@ class TestPromptPitDecisions(unittest.TestCase):
 
         result, _ = self._call(snap, entries, circuit, allocation, strategy)
 
-        self.assertEqual(result, {"d0": "soft"})
+        self.assertEqual(result, {"d0": strategy})
 
     def test_passes_remaining_laps_as_total_laps(self):
         """_show_pit_panel receives laps_remaining as total_laps, not the full race distance."""

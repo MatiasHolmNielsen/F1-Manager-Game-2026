@@ -382,11 +382,11 @@ def _prompt_pit_decisions(
     Returns
     -------
     dict
-        Mapping of driver_id -> compound name for drivers who will pit next lap.
-        The compound is taken from the first stint of the strategy the player
-        selected in the pit panel.
+        Mapping of driver_id -> RaceStrategy for drivers who will pit next lap.
+        The full strategy is returned so the engine can clear and rebuild the
+        pit schedule correctly (matching the SC/weather pit path).
     """
-    decisions: Dict[str, str] = {}
+    decisions: Dict[str, RaceStrategy] = {}
     remaining_laps = snap["laps_remaining"]
     rain_prob = snap["rain_prob"]
     forecast = snap.get("forecast", [])
@@ -428,7 +428,7 @@ def _prompt_pit_decisions(
         )
 
         if strategy is not None:
-            decisions[did] = strategy.stints[0].compound
+            decisions[did] = strategy
         # if None: player chose no change, don't add to decisions
 
     return decisions

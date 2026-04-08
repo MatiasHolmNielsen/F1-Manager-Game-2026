@@ -1050,7 +1050,7 @@ def simulate_race(
     sc_pit_callback: Optional[Callable] = None,
     weather_callback: Optional[Callable] = None,
     player_allocation: Optional[Dict[str, Dict[str, int]]] = None,
-    lap_callback: Optional[Callable[[int, int, dict], Optional[Dict[str, str]]]] = None,
+    lap_callback: Optional[Callable[[int, int, dict], Optional[Dict[str, "RaceStrategy"]]]] = None,
 ) -> RaceReport:
     """Simulate a full race lap-by-lap and return a RaceReport.
 
@@ -1077,9 +1077,24 @@ def simulate_race(
             )
             pit_decisions = lap_callback(lap, total_laps, snap)
             if pit_decisions:
-                for did, compound in pit_decisions.items():
-                    if did in ctx.entry_map:
-                        ctx.pit_schedules.setdefault(did, {})[lap + 1] = compound
+                for did, strat in pit_decisions.items():
+                    if did not in ctx.entry_map:
+                        continue
+                    next_cmp = strat.stints[0].compound.lower()
+                    if did in ctx.live_alloc:
+                        actual_cmp = ctx.live_alloc[did].best_available(next_cmp)
+                        if actual_cmp != next_cmp:
+                            ctx.events.append(
+                                f"Lap {lap}: {ctx.entry_map[did].driver.name} — no {next_cmp} sets "
+                                f"left, switching to {actual_cmp}"
+                            )
+                        next_cmp = actual_cmp
+                    ctx.pit_schedules[did] = {}
+                    stint_lap = lap
+                    for i, stint in enumerate(strat.stints[:-1]):
+                        stint_lap += stint.laps
+                        ctx.pit_schedules[did][stint_lap] = strat.stints[i + 1].compound.lower()
+                    ctx.pit_schedules[did][lap + 1] = next_cmp
 
     results = _finalise_results(
         ctx, lambda did: _resolve_grid_pos(did, grid),

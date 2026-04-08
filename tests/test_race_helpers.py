@@ -19,6 +19,7 @@ from engine.race import (
     simulate_race,
 )
 from engine.core.weather import init_weather_state
+from engine.core.tyres import RaceStrategy, TyreStint
 from engine.race_models import DriverLapState, RaceEntry, RaceResult
 
 
@@ -685,7 +686,7 @@ class TestLapCallbackWiring(unittest.TestCase):
             # Inject exactly once on lap 3
             if lap == 3 and not pit_injected:
                 pit_injected = True
-                return {"d0": "hard"}
+                return {"d0": RaceStrategy(stints=[TyreStint(compound="hard", laps=50)])}
             return None
 
         report = simulate_race(entries, self.circuit, weather="dry", lap_callback=cb)
@@ -748,7 +749,7 @@ class TestInteractivePlayerDidsGuard(unittest.TestCase):
         def cb(lap, total_laps, snap):
             # Schedule a pit at lap 10 → will execute at lap 11
             if lap == 10:
-                return {self.player_driver_id: "medium"}
+                return {self.player_driver_id: RaceStrategy(stints=[TyreStint(compound="medium", laps=50)])}
             return None
 
         report = simulate_race(
@@ -773,11 +774,11 @@ class TestInteractivePlayerDidsGuard(unittest.TestCase):
         def cb(lap, total_laps, snap):
             # Schedule pits at laps 5, 15, 25 → execute at laps 6, 16, 26
             if lap == 5:
-                return {self.player_driver_id: "hard"}
+                return {self.player_driver_id: RaceStrategy(stints=[TyreStint(compound="hard", laps=50)])}
             elif lap == 15:
-                return {self.player_driver_id: "soft"}
+                return {self.player_driver_id: RaceStrategy(stints=[TyreStint(compound="soft", laps=50)])}
             elif lap == 25:
-                return {self.player_driver_id: "medium"}
+                return {self.player_driver_id: RaceStrategy(stints=[TyreStint(compound="medium", laps=50)])}
             return None
 
         report = simulate_race(
@@ -837,7 +838,7 @@ class TestInteractivePlayerDidsGuard(unittest.TestCase):
         def cb(lap, total_laps, snap):
             # Schedule pit for AI driver at lap 12
             if lap == 12:
-                return {self.ai_driver_id: "soft"}
+                return {self.ai_driver_id: RaceStrategy(stints=[TyreStint(compound="soft", laps=50)])}
             return None
 
         report = simulate_race(
@@ -905,7 +906,7 @@ class TestInteractivePlayerDidsGuard(unittest.TestCase):
         def cb(lap, total_laps, snap):
             # Schedule pit near end
             if lap == late_lap:
-                return {self.player_driver_id: "hard"}
+                return {self.player_driver_id: RaceStrategy(stints=[TyreStint(compound="hard", laps=50)])}
             return None
 
         report = simulate_race(
