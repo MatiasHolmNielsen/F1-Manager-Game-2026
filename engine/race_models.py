@@ -23,13 +23,6 @@ DNF_REASONS = [
     "Power unit failure",
 ]
 
-OVERTAKE_THRESHOLD = 0.5   # seconds/lap faster needed before an attempt is considered
-BATTLE_RANGE_S = 1.0       # max gap (seconds) between cars for an overtake to be possible
-
-SC_PROBABILITY  = 0.50     # chance of full Safety Car on incident
-VSC_PROBABILITY = 0.25     # additional chance of Virtual Safety Car on incident
-
-
 @dataclass
 class RaceEntry:
     driver: object

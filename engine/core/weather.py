@@ -17,7 +17,6 @@ import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from engine.race_models import SC_PROBABILITY, VSC_PROBABILITY
 from engine.core.tyres import COMPOUND_PACE_DELTA, TYRE_LIFE_BASE, TyreStint, RaceStrategy
 
 
@@ -33,15 +32,6 @@ RAIN_WARNING:     int = 55
 RAIN_DAMP:        int = 65
 RAIN_WET_ONSET:   int = 80
 RAIN_HEAVY:       int = 92
-
-# ── Weather-triggered Safety Car constants ───────────────────────────────────
-WEATHER_SC_DELTA_THRESHOLD:   int   = 15    # lap-over-lap rain rise that may trigger SC
-WEATHER_SC_SUDDEN_PROB:       float = 0.30  # probability of SC on sudden heavy rain
-WEATHER_SC_AQUAPLANE_THRESH:  int   = 90    # rain_prob that can trigger aquaplaning SC
-WEATHER_SC_AQUAPLANE_PROB:    float = 0.35  # probability at the aquaplaning threshold
-
-# ── SC strategy recommendation ───────────────────────────────────────────────
-SC_PIT_TYRE_AGE_FRAC: float = 0.55   # recommend pit if tyre_age > life * this
 
 
 # ── WeatherState dataclass ───────────────────────────────────────────────────
@@ -77,18 +67,6 @@ class WeatherState:
 
 def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
-
-
-# ── Safety car roll ──────────────────────────────────────────────────────────
-
-def check_safety_car() -> Optional[str]:
-    """Roll for safety car deployment on an incident. Returns 'SC', 'VSC', or None."""
-    roll = random.random()
-    if roll < SC_PROBABILITY:
-        return "SC"
-    if roll < SC_PROBABILITY + VSC_PROBABILITY:
-        return "VSC"
-    return None
 
 
 # ── Compound pace delta ──────────────────────────────────────────────────────
@@ -365,33 +343,6 @@ def detect_weather_threshold(
     return None
 
 
-# ── Weather-triggered Safety Car ──────────────────────────────────────────────
-
-def should_trigger_weather_sc(
-    state: WeatherState,
-    rain_prob: float,
-    prev_rain_prob: float,
-    lap: int,
-    total_laps: int,
-) -> Optional[str]:
-    """Check if sudden rain change warrants deploying a safety car.
-
-    Returns 'SC' or None. Does NOT mutate state — caller sets weather_sc_fired.
-
-    Extracted from simulate_race() lines 365–381.
-    """
-    if state.weather_sc_fired or lap >= total_laps - 3:
-        return None
-    rain_delta = rain_prob - prev_rain_prob
-    if rain_delta > WEATHER_SC_DELTA_THRESHOLD:
-        if random.random() < WEATHER_SC_SUDDEN_PROB:
-            return "SC"
-    if rain_prob > WEATHER_SC_AQUAPLANE_THRESH and prev_rain_prob <= WEATHER_SC_AQUAPLANE_THRESH:
-        if random.random() < WEATHER_SC_AQUAPLANE_PROB:
-            return "SC"
-    return None
-
-
 # ── Strategy helpers (extracted from game/ui/weather_sc.py) ──────────────────
 
 def trim_strategy_to_remaining(strategy: RaceStrategy, remaining_laps: int) -> RaceStrategy:
@@ -413,10 +364,15 @@ def trim_strategy_to_remaining(strategy: RaceStrategy, remaining_laps: int) -> R
     return RaceStrategy(stints=stints, label=strategy.label)
 
 
-def should_recommend_sc_pit(tyre_age: int, base_life: int) -> bool:
-    """Return True if the tyre age warrants a pit recommendation under safety car.
-
-    Extracted from the inline rec_pit calculation in show_sc_strategy_decision().
-    Threshold: tyre_age > base_life * SC_PIT_TYRE_AGE_FRAC (0.55).
-    """
-    return tyre_age > base_life * SC_PIT_TYRE_AGE_FRAC
+# ── Backward-compat re-exports from engine.core.safety_car ───────────────────
+# Callers that previously imported these from engine.core.weather continue to work.
+from engine.core.safety_car import (  # noqa: E402, F401
+    check_safety_car,
+    should_trigger_weather_sc,
+    should_recommend_sc_pit,
+    WEATHER_SC_DELTA_THRESHOLD,
+    WEATHER_SC_SUDDEN_PROB,
+    WEATHER_SC_AQUAPLANE_THRESH,
+    WEATHER_SC_AQUAPLANE_PROB,
+    SC_PIT_TYRE_AGE_FRAC,
+)

@@ -14,15 +14,20 @@ from typing import Callable, Dict, List, Optional
 from engine.race_models import (
     RaceEntry, RaceResult, DriverLapState, DriverLapRecord,
     PitStop, RaceReport, POINTS_SYSTEM, DNF_REASONS,
-    OVERTAKE_THRESHOLD, BATTLE_RANGE_S,
 )
 from engine.core.weather import (
     WeatherState, init_weather_state, step_rain_probability,
     detect_weather_threshold, get_rain_trend, generate_weather_forecast,
-    check_safety_car, compound_pace_delta,
+    compound_pace_delta,
+)
+from engine.core.safety_car import (
+    check_safety_car,
     WEATHER_SC_DELTA_THRESHOLD, WEATHER_SC_SUDDEN_PROB,
     WEATHER_SC_AQUAPLANE_THRESH, WEATHER_SC_AQUAPLANE_PROB,
+    SC_LAP_TIME_MULTIPLIER, VSC_LAP_TIME_MULTIPLIER,
+    SC_DURATION_MIN, SC_DURATION_MAX,
 )
+from engine.core.overtaking import _attempt_overtake, OVERTAKE_THRESHOLD, BATTLE_RANGE_S
 from engine.core.dnf import (
     roll_mechanical_dnf, roll_tyre_dnf, roll_collision_outcome,
 )
@@ -31,7 +36,7 @@ from engine.core.tyres import (
     TyreStint, RaceStrategy, race_laps, adjusted_tyre_life,
     ai_strategy, ai_should_pit_for_weather, build_pit_schedule,
 )
-from engine.race_physics import _base_lap_time, _attempt_overtake
+from engine.core.lap_time import _base_lap_time
 from engine.qualifying import QualiResult, simulate_qualifying  # noqa: F401 (re-export)
 
 # Re-export everything callers may import from this module
@@ -119,9 +124,9 @@ def _compute_driver_lap_time(
     lap_time = base + fuel_delta + tyre_delta + random.gauss(0, lap_sigma)
 
     if sc_state == "SC":
-        lap_time *= 1.40
+        lap_time *= SC_LAP_TIME_MULTIPLIER
     elif sc_state == "VSC":
-        lap_time *= 1.30
+        lap_time *= VSC_LAP_TIME_MULTIPLIER
 
     mistake_prob = max(0.0, (60.0 - driver.experience) / 100.0) * 0.04
     if random.random() < mistake_prob:
@@ -898,12 +903,12 @@ def _run_lap(
         deployed = check_safety_car()
         if deployed == "SC":
             ctx.sc_state = "SC"
-            ctx.sc_laps_remaining = random.randint(3, 5)
+            ctx.sc_laps_remaining = random.randint(SC_DURATION_MIN, SC_DURATION_MAX)
             ctx.sc_lap_count = 0
             ctx.events.append(f"Lap {lap}: SAFETY CAR DEPLOYED")
         elif deployed == "VSC":
             ctx.sc_state = "VSC"
-            ctx.sc_laps_remaining = random.randint(3, 5)
+            ctx.sc_laps_remaining = random.randint(SC_DURATION_MIN, SC_DURATION_MAX)
             ctx.sc_lap_count = 0
             ctx.events.append(f"Lap {lap}: VIRTUAL SAFETY CAR DEPLOYED")
 
@@ -915,14 +920,14 @@ def _run_lap(
         if rain_delta_this_lap > WEATHER_SC_DELTA_THRESHOLD:
             if random.random() < WEATHER_SC_SUDDEN_PROB:
                 ctx.sc_state = "SC"
-                ctx.sc_laps_remaining = random.randint(3, 5)
+                ctx.sc_laps_remaining = random.randint(SC_DURATION_MIN, SC_DURATION_MAX)
                 ctx.sc_lap_count = 0
                 ctx.ws.weather_sc_fired = True
                 ctx.events.append(f"Lap {lap}: SAFETY CAR — sudden heavy rain")
         elif rain_prob > WEATHER_SC_AQUAPLANE_THRESH and prev_lap_rain_prob <= WEATHER_SC_AQUAPLANE_THRESH:
             if random.random() < WEATHER_SC_AQUAPLANE_PROB:
                 ctx.sc_state = "SC"
-                ctx.sc_laps_remaining = random.randint(3, 5)
+                ctx.sc_laps_remaining = random.randint(SC_DURATION_MIN, SC_DURATION_MAX)
                 ctx.sc_lap_count = 0
                 ctx.ws.weather_sc_fired = True
                 ctx.events.append(f"Lap {lap}: SAFETY CAR — aquaplaning risk")
